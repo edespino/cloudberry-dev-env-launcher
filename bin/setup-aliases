@@ -1,0 +1,30 @@
+#!/bin/bash
+# Setup convenient aliases for cloudberry-dev-env-launcher tools
+# Usage: source bin/setup-aliases (from repo root) or source ../../bin/setup-aliases (from environment)
+
+# Get the repository root directory
+if [[ -n "${BASH_SOURCE[0]}" ]]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+else
+    # Fallback for when sourced in different contexts
+    REPO_ROOT="$(pwd)"
+    while [[ "$REPO_ROOT" != "/" && ! -f "$REPO_ROOT/bin/spot-check" ]]; do
+        REPO_ROOT="$(dirname "$REPO_ROOT")"
+    done
+fi
+
+# Verify we found the repo root
+if [[ ! -f "$REPO_ROOT/bin/spot-check" ]]; then
+    echo "❌ Could not find cloudberry-dev-env-launcher repository root" >&2
+    return 1 2>/dev/null || exit 1
+fi
+
+# Create alias for spot-check that works from anywhere in the repo
+alias spot-check="$REPO_ROOT/bin/spot-check"
+
+# Only show messages if not in silent mode
+if [[ "$CLOUDBERRY_SETUP_SILENT" != "true" ]]; then
+    echo "✅ Cloudberry aliases configured:"
+    echo "  spot-check - Check spot instance availability"
+fi

@@ -1,0 +1,669 @@
+#!/usr/bin/env bash
+#
+# OS Selector for Cloudberry Development Environment Launcher
+# Creates a new environment directory based on selected OS from multi-os-sample
+#
+
+set -e
+
+# Get script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+ENVIRONMENTS_DIR="$REPO_ROOT/environments"
+TEMPLATE_DIR="$ENVIRONMENTS_DIR/multi-os-sample"
+
+# Define OS options
+declare -A OS_OPTIONS=(
+    ["1"]="Amazon Linux 2023"
+    ["2"]="Oracle Linux 8.10"
+    ["3"]="Rocky Linux 8"
+    ["4"]="Rocky Linux 9"
+    ["5"]="Rocky Linux 10"
+    ["6"]="OpenSUSE 15.6"
+    ["7"]="SUSE 15 SP6"
+    ["8"]="Ubuntu 22.04 (Jammy)"
+)
+
+# Define corresponding AMI configurations
+declare -A AMI_OWNERS=(
+    ["1"]="137112412989"
+    ["2"]="679593333241"
+    ["3"]="679593333241"
+    ["4"]="679593333241"
+    ["5"]="679593333241"
+    ["6"]="679593333241"
+    ["7"]="013907871322"
+    ["8"]="099720109477"
+)
+
+declare -A AMI_FILTERS=(
+    ["1"]="al2023-ami-minimal-2023.*-kernel-6.12-x86_64"
+    ["2"]="cloudimg-oel810-lvm-02-01-2025-prod-*"
+    ["3"]="Rocky-8-EC2-Base-8*x86_64*"
+    ["4"]="Rocky-9-EC2-Base-9.*x86_64*"
+    ["5"]="Rocky-10-EC2-Base-10.*x86_64*"
+    ["6"]="openSUSE-Leap-15-6-*-hvm-ssd-x86_64-*"
+    ["7"]="suse-sles-15-sp6-v20250409-hvm-ssd-x86_64"
+    ["8"]="*ubuntu-jammy-22.04-amd64-minimal-2025*"
+)
+
+declare -A DEFAULT_USERNAMES=(
+    ["1"]="ec2-user"
+    ["2"]="ec2-user"
+    ["3"]="rocky"
+    ["4"]="rocky"
+    ["5"]="rocky"
+    ["6"]="ec2-user"
+    ["7"]="ec2-user"
+    ["8"]="ubuntu"
+)
+
+# Define directory name mappings
+declare -A DIR_NAMES=(
+    ["1"]="amazon-linux-2023"
+    ["2"]="oracle-linux-810"
+    ["3"]="rocky-linux-8"
+    ["4"]="rocky-linux-9"
+    ["5"]="rocky-linux-10"
+    ["6"]="opensuse-156"
+    ["7"]="suse-15sp6"
+    ["8"]="ubuntu-2204"
+)
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+# Function to display header
+show_header() {
+    echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║${NC}          ${CYAN}Cloudberry Dev Environment OS Selector${NC}          ${BLUE}║${NC}"
+    echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo
+}
+
+# Function to display OS options
+show_options() {
+    echo -e "${YELLOW}Available Operating Systems:${NC}"
+    echo
+    for key in {1..8}; do
+        echo -e "  ${GREEN}[$key]${NC} ${OS_OPTIONS[$key]} ${PURPLE}(${DIR_NAMES[$key]})${NC}"
+    done
+    echo
+}
+
+# Function to validate selection
+validate_selection() {
+    local selection=$1
+    if [[ ! $selection =~ ^[1-8]$ ]]; then
+        echo -e "${RED}❌ Invalid selection. Please choose 1-8.${NC}"
+        return 1
+    fi
+    return 0
+}
+
+# Function to check if template exists
+check_template() {
+    if [[ ! -d "$TEMPLATE_DIR" ]]; then
+        echo -e "${RED}❌ Template directory not found: $TEMPLATE_DIR${NC}"
+        echo -e "${YELLOW}💡 Make sure you're running this from the repository root${NC}"
+        exit 1
+    fi
+}
+
+# Function to display selected configuration
+show_configuration() {
+    local selection=$1
+    local os_name="${OS_OPTIONS[$selection]}"
+    local dir_name="${DIR_NAMES[$selection]}"
+    local ami_owner="${AMI_OWNERS[$selection]}"
+    local ami_filter="${AMI_FILTERS[$selection]}"
+    local username="${DEFAULT_USERNAMES[$selection]}"
+    
+    echo
+    echo -e "${GREEN}✅ Selected: ${CYAN}$os_name${NC}"
+    echo
+    echo -e "${YELLOW}Configuration Details:${NC}"
+    echo -e "  ${PURPLE}Directory Name:${NC} $dir_name"
+    echo -e "  ${PURPLE}AMI Owner:${NC} $ami_owner"
+    echo -e "  ${PURPLE}AMI Filter:${NC} $ami_filter"
+    echo -e "  ${PURPLE}Default Username:${NC} $username"
+    echo
+}
+
+# Function to create environment directory
+create_environment() {
+    local selection=$1
+    local custom_name="$2"
+    local os_name="${OS_OPTIONS[$selection]}"
+    local dir_name="${DIR_NAMES[$selection]}"
+    local ami_owner="${AMI_OWNERS[$selection]}"
+    local ami_filter="${AMI_FILTERS[$selection]}"
+    local username="${DEFAULT_USERNAMES[$selection]}"
+    
+    # Use custom name if provided, otherwise use default
+    local target_name="${custom_name:-$dir_name}"
+    local target_dir="$ENVIRONMENTS_DIR/$target_name"
+    
+    # Check if directory already exists
+    if [[ -d "$target_dir" ]]; then
+        echo -e "${RED}❌ Directory already exists: $target_dir${NC}"
+        echo -n -e "${YELLOW}Overwrite? [y/N]: ${NC}"
+        read -r confirm
+        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+            echo -e "${YELLOW}❌ Operation cancelled${NC}"
+            exit 1
+        fi
+        rm -rf "$target_dir"
+    fi
+    
+    # Copy template directory
+    echo -e "${BLUE}📁 Copying template to $target_name...${NC}"
+    cp -r "$TEMPLATE_DIR" "$target_dir"
+    
+    # Update .envrc with correct path and selected OS configuration
+    local envrc_file="$target_dir/.envrc"
+    if [[ -f "$envrc_file" ]]; then
+        # Update the directory reference
+        sed -i.bak "s|environments/[^/]*|environments/$target_name|g" "$envrc_file"
+        
+        # Replace the AMI configuration section with selected OS only
+        # Use sed to replace the section between the markers
+        sed -i.tmp '/^## Rocky Linux 9/,/^## ======================================================================/{
+            /^## Rocky Linux 9/c\
+## '"$os_name"'\
+AMI_OWNER="'"$ami_owner"'"\
+AMI_FILTER='"'"''"$ami_filter"''"'"'\
+export TF_VAR_default_username="'"$username"'"\
+
+            /^## ======================================================================/!d
+        }' "$envrc_file"
+        
+        rm -f "$envrc_file.tmp"
+        rm -f "$envrc_file.bak"
+    fi
+    
+    # Create updated .env file
+    local env_file="$target_dir/.env"
+    cat > "$env_file" << EOF
+# Enhanced .env for $os_name environment
+# Created by os-selector on $(date)
+# Loaded by zsh dotenv plugin for helpful aliases
+
+# =============================================================================
+# AMI CONFIGURATION
+# =============================================================================
+
+AMI_OWNER="$ami_owner"
+AMI_FILTER='$ami_filter'
+export TF_VAR_default_username="$username"
+
+# =============================================================================
+# SPOT INSTANCE AVAILABILITY CHECKER (sourced from shared library)
+# =============================================================================
+
+# Source shared spot checking functions
+REPO_ROOT="\$(cd ../.. && pwd)"
+if [[ -f "\$REPO_ROOT/lib/spot-functions.sh" ]]; then
+    source "\$REPO_ROOT/lib/spot-functions.sh"
+else
+    echo "⚠️  Warning: Shared spot functions not found at \$REPO_ROOT/lib/spot-functions.sh" >&2
+fi
+
+# Functions are now loaded from shared library above
+
+# =============================================================================
+# CORE FUNCTIONS (Optimizations 1, 4)
+# =============================================================================
+
+# IP lookup function (excludes terminated instances explicitly)
+get_instance_ip() {
+  local instance_index="\${1:-0}"
+  
+  # Fetch IP directly, explicitly excluding terminated instances
+  local ip=\$(aws ec2 describe-instances --region "\$TF_VAR_region" \\
+    --filters "Name=tag:Name,Values=\${TF_VAR_env_prefix}-instance-\${instance_index}" \\
+              "Name=instance-state-name,Values=running" \\
+    --query "Reservations[*].Instances[*].PublicIpAddress" \\
+    --output text 2>/dev/null | head -n1)
+  
+  if [[ -n "\$ip" && "\$ip" != "None" && "\$ip" != "" ]]; then
+    echo "\$ip"
+  else
+    echo "❌ No running instance found for \${TF_VAR_env_prefix}-instance-\${instance_index}" >&2
+    return 1
+  fi
+}
+
+# Function to safely clean IP cache files
+clean_ip_cache() {
+  setopt NULL_GLOB 2>/dev/null || true
+  rm -f /tmp/\${TF_VAR_env_prefix}_ip_* 2>/dev/null || true
+  unsetopt NULL_GLOB 2>/dev/null || true
+}
+
+# Enhanced function to retrieve the public IP and wait for SSH availability
+wait_for_ssh() {
+  local region="\$1"
+  local env_prefix="\$2"
+  local instance_index="\${3:-0}"
+  local hostname
+
+  # Retrieve the IP address using cached function
+  hostname=\$(get_instance_ip "\$instance_index")
+
+  if [ -z "\$hostname" ] || [ "\$hostname" = "None" ]; then
+    echo "❌ Failed to retrieve IP address for \${env_prefix}-instance-\${instance_index} in region \${region}."
+    return 1
+  fi
+
+  echo "⏳ Waiting for SSH to become available on \${hostname}..."
+
+  for ((i=1; i<=30; i++)); do
+    if timeout 5 nc -z "\$hostname" 22 2>/dev/null; then
+      echo "✅ SSH is available on \${hostname}"
+      break
+    else
+      echo "⏳ SSH not ready (attempt \$i/30). Retrying..."
+      sleep \$((i*2))
+    fi
+
+    if [ \$i -eq 30 ]; then
+      echo "❌ SSH is still not available after 30 attempts. Exiting."
+      rename_ami "FAILED"
+      cleanup
+      exit 1
+    fi
+  done
+}
+
+# SSH connection options with timeouts (as array for proper expansion)
+SSH_OPTS=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10)
+
+# NOTE: SSH key path is set in .envrc
+## SSH_KEY_PATH="\${TF_VAR_env_prefix}_generated_key.pem"
+
+# =============================================================================
+# SSH ALIASES (Optimizations 2, 8)
+# =============================================================================
+
+# Wait for SSH (enhanced with multi-instance support)
+alias lw='wait_for_ssh \${TF_VAR_region} \${TF_VAR_env_prefix}'
+alias lw1='wait_for_ssh \${TF_VAR_region} \${TF_VAR_env_prefix} 1'
+alias lw2='wait_for_ssh \${TF_VAR_region} \${TF_VAR_env_prefix} 2'
+
+# SSH with gpadmin setup (fixed consistency issue)
+alias lgw='wait_for_ssh \${TF_VAR_region} \${TF_VAR_env_prefix}; \\
+           ssh "\${SSH_OPTS[@]}" \\
+               -i \${SSH_KEY_PATH} \\
+               \${TF_VAR_default_username}@\$(get_instance_ip 0) \\
+               "cat ~/.ssh/authorized_keys | sudo tee -a ~gpadmin/.ssh/authorized_keys" && \\
+           echo "✅ SSH key copied to gpadmin user"'
+
+# SSH connections (using cached IPs and timeouts)
+alias lssh='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\$(get_instance_ip 0) -A'
+alias lssh1='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\$(get_instance_ip 1) -A'
+alias lssh2='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\$(get_instance_ip 2) -A'
+
+alias lgssh='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} gpadmin@\$(get_instance_ip 0) -A'
+alias lgssh1='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} gpadmin@\$(get_instance_ip 1) -A'
+alias lgssh2='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} gpadmin@\$(get_instance_ip 2) -A'
+
+# =============================================================================
+# INSTANCE MANAGEMENT (Optimization 3)
+# =============================================================================
+
+# Instance state with enhanced output (excluding terminated instances)
+alias istate='aws ec2 describe-instances --region "\$TF_VAR_region" \\
+  --filters "Name=tag:Name,Values=\${TF_VAR_env_prefix}-instance-*" \\
+            "Name=instance-state-name,Values=pending,running,shutting-down,stopping,stopped" \\
+  --query "Reservations[].Instances[].[Tags[?Key==\\\`Name\\\`].Value|[0], State.Name, InstanceType, PublicIpAddress, PrivateIpAddress]" \\
+  --output table'
+
+# All non-terminated instances across the project
+alias iastate='aws ec2 describe-instances --region "\$TF_VAR_region" \\
+  --filters "Name=instance-state-name,Values=pending,running,shutting-down,stopping,stopped" \\
+  --query "Reservations[].Instances[].[Tags[?Key==\\\`Name\\\`].Value|[0], State.Name, InstanceType, PublicIpAddress, PrivateIpAddress]" \\
+  --output table'
+
+# Instance start with cache invalidation
+alias istart='echo "🚀 Starting instances..." && \\
+  STOPPED_IDS=\$(aws ec2 describe-instances --region "\$TF_VAR_region" \\
+    --filters "Name=tag:Name,Values=\${TF_VAR_env_prefix}-instance-*" "Name=instance-state-name,Values=stopped" \\
+    --query "Reservations[].Instances[].InstanceId" --output text) && \\
+  if [[ -n "\$STOPPED_IDS" ]]; then \\
+    aws ec2 start-instances --region "\$TF_VAR_region" --instance-ids \$STOPPED_IDS && \\
+    echo "⏳ Waiting for instances to be running..." && \\
+    aws ec2 wait instance-running --region "\$TF_VAR_region" --instance-ids \$STOPPED_IDS && \\
+    echo "✅ Instances are now running"; \\
+  else \\
+    echo "ℹ️  No stopped instances found to start"; \\
+  fi; \\
+  clean_ip_cache'
+
+# Instance stop with cache invalidation
+alias istop='echo "🛑 Stopping instances..." && \\
+  RUNNING_IDS=\$(aws ec2 describe-instances --region "\$TF_VAR_region" \\
+    --filters "Name=tag:Name,Values=\${TF_VAR_env_prefix}-instance-*" "Name=instance-state-name,Values=running" \\
+    --query "Reservations[].Instances[].InstanceId" --output text) && \\
+  if [[ -n "\$RUNNING_IDS" ]]; then \\
+    aws ec2 stop-instances --region "\$TF_VAR_region" --no-hibernate --instance-ids \$RUNNING_IDS && \\
+    echo "⏳ Waiting for instances to stop..." && \\
+    aws ec2 wait instance-stopped --region "\$TF_VAR_region" --instance-ids \$RUNNING_IDS && \\
+    echo "✅ Instances are now stopped"; \\
+  else \\
+    echo "ℹ️  No running instances found to stop"; \\
+  fi; \\
+  clean_ip_cache'
+
+# Refresh with cache invalidation
+alias irefresh='clean_ip_cache && echo "✅ IP cache refreshed"'
+
+# =============================================================================
+# FILE TRANSFER (Optimization 6)
+# =============================================================================
+
+# Enhanced SCP aliases with progress feedback
+alias lcopyto='function _lcopyto() { 
+  echo "📤 Copying \$1 to \${TF_VAR_default_username}@\$(get_instance_ip 0):\$2"
+  scp "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} "\$1" \${TF_VAR_default_username}@\$(get_instance_ip 0):"\$2"
+}; _lcopyto'
+
+alias lgcopyto='function _lgcopyto() { 
+  echo "📤 Copying \$1 to gpadmin@\$(get_instance_ip 0):\$2"
+  scp "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} "\$1" gpadmin@\$(get_instance_ip 0):"\$2"
+}; _lgcopyto'
+
+alias lcopyfrom='function _lcopyfrom() { 
+  echo "📥 Copying \${TF_VAR_default_username}@\$(get_instance_ip 0):\$1 to \$2"
+  scp "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\$(get_instance_ip 0):"\$1" "\$2"
+}; _lcopyfrom'
+
+alias lgcopyfrom='function _lgcopyfrom() { 
+  echo "📥 Copying gpadmin@\$(get_instance_ip 0):\$1 to \$2"
+  scp "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} gpadmin@\$(get_instance_ip 0):"\$1" "\$2"
+}; _lgcopyfrom'
+
+# Multi-instance SCP
+alias lcopyto1='function _lcopyto1() { 
+  echo "📤 Copying \$1 to \${TF_VAR_default_username}@\$(get_instance_ip 1):\$2"
+  scp "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} "\$1" \${TF_VAR_default_username}@\$(get_instance_ip 1):"\$2"
+}; _lcopyto1'
+
+alias lcopyto2='function _lcopyto2() { 
+  echo "📤 Copying \$1 to \${TF_VAR_default_username}@\$(get_instance_ip 2):\$2"
+  scp "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} "\$1" \${TF_VAR_default_username}@\$(get_instance_ip 2):"\$2"
+}; _lcopyto2'
+
+# =============================================================================
+# STATUS & MONITORING (Optimization 5)
+# =============================================================================
+
+# Status and monitoring shortcuts
+alias istatus='echo "📊 \${TF_VAR_env_prefix} Status:" && istate'
+
+alias iping='for i in {0..2}; do 
+  echo "🏓 Pinging instance-\$i:"
+  timeout 3 ping -c 2 \$(get_instance_ip \$i) 2>/dev/null || echo "❌ Instance \$i not reachable"
+done'
+
+alias ilogs='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} gpadmin@\$(get_instance_ip 0) "sudo journalctl -f"'
+
+alias itop='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} gpadmin@\$(get_instance_ip 0) "htop"'
+
+alias idisk='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} gpadmin@\$(get_instance_ip 0) "df -h && echo && lsblk"'
+
+# =============================================================================
+# VS CODE & DEVELOPMENT
+# =============================================================================
+
+# Enhanced VS Code remote with error handling
+alias icode='function _icode() {
+  local path="\${1:-/home/gpadmin}"
+  local hostname=\$(get_instance_ip 0)
+  if [[ -n "\$hostname" && "\$hostname" != "None" ]]; then
+    echo "🔗 Opening VS Code remote to \${hostname}:\${path}"
+    /Applications/Visual\\ Studio\\ Code.app/Contents/Resources/app/bin/code --remote "ssh-remote+\${TF_VAR_env_prefix}" "\$path"
+  else 
+    echo "❌ Cannot connect - instance not running"
+    return 1
+  fi
+}; _icode'
+
+alias icloudberry='icode /home/gpadmin/cloudberry'
+
+# =============================================================================
+# UTILITY ALIASES
+# =============================================================================
+
+# Network and AWS utilities
+alias myip='echo \$(curl -s https://api.ipify.org)'
+alias isso='aws sso login --sso-session your-sso-session'
+
+# Spot instance availability checker aliases
+alias spot-check='check_spot_availability'
+alias spot-prices='check_spot_prices'
+
+# Justfile integration (update path as needed)
+alias j='just -f /home/gpadmin/cloudberry-devenv-launcher/docs/Justfile'
+
+# Performance testing
+alias itest='echo "🧪 Running performance tests..." && ./performance-test.sh'
+
+# Environment info
+alias iinfo='echo "🏷️  Environment: \$TF_VAR_env_prefix" && 
+echo "🌍 Region: \$TF_VAR_region" && 
+echo "👤 User: \$TF_VAR_default_username" && 
+echo "🆔 AMI: \$TF_VAR_ami" && 
+echo "💻 Instance Type: \$TF_VAR_instance_type" && 
+echo "🔢 VM Count: \$TF_VAR_vm_count"'
+
+# OS version check
+unalias ios 2>/dev/null || true
+ios() {
+    ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\$(get_instance_ip 0) 'if [ -f /etc/os-release ]; then source /etc/os-release && echo \$PRETTY_NAME; else cat /proc/version | sed "s/Linux version //" | cut -d" " -f1-2; fi' 2>/dev/null
+}
+
+# Terraform init aliases
+alias ti='terraform init'      # Local backend (uses backend.tf config)
+EOF
+    
+    # No need to modify main.tf - template now uses generic names
+    
+    echo -e "${GREEN}✨ Environment created successfully!${NC}"
+    echo
+    echo -e "${YELLOW}📁 Location:${NC} $target_dir"
+    echo -e "${YELLOW}🔧 Next steps:${NC}"
+    echo -e "  1. ${CYAN}cd $target_dir${NC}"
+    echo -e "  2. ${CYAN}direnv allow .${NC}"
+    echo -e "  3. ${CYAN}terraform init${NC}"
+    echo -e "  4. ${CYAN}terraform plan${NC}"
+    echo -e "  5. ${CYAN}terraform apply${NC}"
+    echo
+}
+
+# Function to get OS selection
+get_os_selection() {
+    while true; do
+        show_options
+        
+        echo -n -e "${YELLOW}Select an OS [1-8] or 'q' to quit: ${NC}"
+        read -r selection
+        
+        # Check for quit
+        if [[ "$selection" == "q" || "$selection" == "Q" ]]; then
+            echo -e "${YELLOW}👋 Goodbye!${NC}"
+            exit 0
+        fi
+        
+        # Validate selection
+        if validate_selection "$selection"; then
+            return 0
+        fi
+        
+        echo
+        echo -e "${RED}❌ Invalid selection. Please try again.${NC}"
+        echo
+    done
+}
+
+# Function to get directory name choice
+get_directory_name() {
+    local selection=$1
+    local custom_name=""
+    
+    while true; do
+        echo -e "${YELLOW}Directory name options:${NC}"
+        echo -e "  ${GREEN}[1]${NC} Use default name: ${CYAN}${DIR_NAMES[$selection]}${NC} ${PURPLE}(default)${NC}"
+        echo -e "  ${GREEN}[2]${NC} Enter custom name"
+        echo -e "  ${GREEN}[b]${NC} Back to OS selection"
+        echo
+        echo -n -e "${YELLOW}Choose option [1/2/b] (default: 1): ${NC}"
+        read -r name_choice
+        
+        # Default to option 1 if empty
+        if [[ -z "$name_choice" ]]; then
+            name_choice="1"
+        fi
+        
+        case "$name_choice" in
+            "1")
+                custom_name=""
+                break
+                ;;
+            "2")
+                echo -n -e "${YELLOW}Enter custom directory name: ${NC}"
+                read -r custom_name
+                if [[ -z "$custom_name" ]]; then
+                    echo -e "${RED}❌ Empty name not allowed${NC}"
+                    echo
+                    continue
+                fi
+                # Validate directory name (basic check)
+                if [[ ! "$custom_name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+                    echo -e "${RED}❌ Invalid directory name. Use only letters, numbers, hyphens, and underscores.${NC}"
+                    echo
+                    continue
+                fi
+                break
+                ;;
+            "b"|"B")
+                return 1  # Signal to go back
+                ;;
+            *)
+                echo -e "${RED}❌ Invalid option. Please choose 1, 2, or b.${NC}"
+                echo
+                ;;
+        esac
+    done
+    
+    # Return the custom name via a global variable
+    SELECTED_CUSTOM_NAME="$custom_name"
+    return 0
+}
+
+# Function to confirm environment creation
+confirm_creation() {
+    local selection=$1
+    local custom_name="$2"
+    local os_name="${OS_OPTIONS[$selection]}"
+    local dir_name="${custom_name:-${DIR_NAMES[$selection]}}"
+    
+    while true; do
+        echo
+        echo -e "${CYAN}📋 Summary:${NC}"
+        echo -e "  ${PURPLE}OS:${NC} $os_name"
+        echo -e "  ${PURPLE}Directory:${NC} $dir_name"
+        echo -e "  ${PURPLE}AMI Owner:${NC} ${AMI_OWNERS[$selection]}"
+        echo -e "  ${PURPLE}AMI Filter:${NC} ${AMI_FILTERS[$selection]}"
+        echo -e "  ${PURPLE}Username:${NC} ${DEFAULT_USERNAMES[$selection]}"
+        echo
+        echo -e "${YELLOW}Actions:${NC}"
+        echo -e "  ${GREEN}[c]${NC} Create environment ${PURPLE}(default)${NC}"
+        echo -e "  ${GREEN}[b]${NC} Back to directory name"
+        echo -e "  ${GREEN}[o]${NC} Back to OS selection"
+        echo -e "  ${GREEN}[q]${NC} Quit"
+        echo
+        echo -n -e "${YELLOW}Choose action [c/b/o/q] (default: c): ${NC}"
+        read -r action
+        
+        # Default to create if empty
+        if [[ -z "$action" ]]; then
+            action="c"
+        fi
+        
+        case "$action" in
+            "c"|"C")
+                return 0  # Proceed with creation
+                ;;
+            "b"|"B")
+                return 1  # Go back to directory name
+                ;;
+            "o"|"O")
+                return 2  # Go back to OS selection
+                ;;
+            "q"|"Q")
+                echo -e "${YELLOW}👋 Goodbye!${NC}"
+                exit 0
+                ;;
+            *)
+                echo -e "${RED}❌ Invalid option. Please choose c, b, o, or q.${NC}"
+                echo
+                ;;
+        esac
+    done
+}
+
+# Main function with navigation flow
+main() {
+    check_template
+    show_header
+    
+    while true; do
+        # Step 1: Get OS selection
+        get_os_selection
+        local selection=$selection
+        
+        while true; do
+            # Show configuration for selected OS
+            show_configuration "$selection"
+            
+            # Step 2: Get directory name
+            if get_directory_name "$selection"; then
+                local custom_name="$SELECTED_CUSTOM_NAME"
+                
+                # Step 3: Confirm and create
+                local confirm_result
+                confirm_creation "$selection" "$custom_name"
+                confirm_result=$?
+                
+                case $confirm_result in
+                    0)
+                        # Create environment and exit
+                        create_environment "$selection" "$custom_name"
+                        exit 0
+                        ;;
+                    1)
+                        # Go back to directory name - continue inner loop
+                        continue
+                        ;;
+                    2)
+                        # Go back to OS selection - break inner loop
+                        break
+                        ;;
+                esac
+            else
+                # User chose to go back to OS selection
+                break
+            fi
+        done
+    done
+}
+
+# Run main function
+main "$@"

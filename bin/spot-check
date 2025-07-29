@@ -1,0 +1,103 @@
+#!/bin/bash
+# Centralized Spot Instance Availability Checker
+# Works from any environment directory in the cloudberry-dev-env-launcher repo
+# Usage: spot-check [prices]
+
+set -e
+
+# Auto-detect repository root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Function to find the nearest environment directory
+find_env_dir() {
+    local current_dir="$(pwd)"
+    
+    # Check if we're already in an environment directory
+    if [[ -f ".envrc" && -f "main.tf" ]]; then
+        echo "$current_dir"
+        return 0
+    fi
+    
+    # Check if we're in the environments directory
+    if [[ "$(basename "$current_dir")" == "environments" ]]; then
+        echo "❌ Please run from within a specific environment directory" >&2
+        echo "💡 Available environments:" >&2
+        ls -1 "$current_dir" | grep -v "TEMPLATE" | sed 's/^/  - /' >&2
+        return 1
+    fi
+    
+    # Check if we're in the repo root
+    if [[ "$current_dir" == "$REPO_ROOT" ]]; then
+        echo "❌ Please run from within an environment directory" >&2
+        echo "💡 Example: cd environments/ol810-sample-test && spot-check" >&2
+        return 1
+    fi
+    
+    # Check parent directories for environment markers
+    local check_dir="$current_dir"
+    while [[ "$check_dir" != "/" && "$check_dir" != "$HOME" ]]; do
+        if [[ -f "$check_dir/.envrc" && -f "$check_dir/main.tf" ]]; then
+            echo "$check_dir"
+            return 0
+        fi
+        check_dir="$(dirname "$check_dir")"
+    done
+    
+    echo "❌ Could not find environment directory" >&2
+    echo "💡 Make sure you're in a cloudberry environment directory" >&2
+    return 1
+}
+
+# Find and validate environment directory
+ENV_DIR=$(find_env_dir)
+if [[ $? -ne 0 ]]; then
+    exit 1
+fi
+
+echo "🔍 Using environment: $(basename "$ENV_DIR")"
+echo ""
+
+# Change to environment directory
+cd "$ENV_DIR"
+
+# Source environment configuration
+if [[ -f ".envrc" ]]; then
+    source .envrc
+else
+    echo "❌ No .envrc found in $ENV_DIR" >&2
+    exit 1
+fi
+
+# Source functions from shared library or local .env
+SHARED_LIB="$REPO_ROOT/lib/spot-functions.sh"
+if [[ -f "$SHARED_LIB" ]]; then
+    source "$SHARED_LIB"
+elif [[ -f ".env" ]]; then
+    source .env
+else
+    echo "❌ No spot checking functions found" >&2
+    echo "💡 Expected $SHARED_LIB or .env in current directory" >&2
+    exit 1
+fi
+
+# Validate required functions exist
+if ! type check_spot_availability >/dev/null 2>&1; then
+    echo "❌ check_spot_availability function not found" >&2
+    exit 1
+fi
+
+if ! type check_spot_prices >/dev/null 2>&1; then
+    echo "❌ check_spot_prices function not found" >&2
+    exit 1
+fi
+
+# Execute the requested function
+case "${1:-check}" in
+    "prices"|"price")
+        check_spot_prices
+        ;;
+    "check"|*)
+        check_spot_availability
+        ;;
+esac
