@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+#
+# OS Configuration for Cloudberry Development Environment Launcher
+# Using descriptive keys for better maintainability and self-documentation
+#
+# Key Benefits:
+# - Self-documenting configuration  
+# - Easier team collaboration
+# - No need to remember what "option 7" means
+# - User still selects by number (1, 2, 3...) in UI
+
+# =============================================================================
+# DEFAULT CONFIGURATIONS WITH DESCRIPTIVE KEYS
+# =============================================================================
+
+# Define OS options with descriptive keys
+OS_OPTIONS=(
+    ["aws-amazon"]="Amazon Linux 2023"
+    ["oracle-linux"]="Oracle Linux 8.10"
+    ["rocky-8"]="Rocky Linux 8"
+    ["rocky-9"]="Rocky Linux 9"
+    ["rocky-latest"]="Rocky Linux 10"
+    ["opensuse-leap"]="OpenSUSE 15.6"
+    ["suse-enterprise"]="SUSE 15 SP6"
+    ["ubuntu-lts"]="Ubuntu 22.04 (Jammy)"
+)
+
+# Define corresponding AMI configurations
+AMI_OWNERS=(
+    ["aws-amazon"]="137112412989"
+    ["oracle-linux"]="679593333241"
+    ["rocky-8"]="679593333241"
+    ["rocky-9"]="679593333241"
+    ["rocky-latest"]="679593333241"
+    ["opensuse-leap"]="679593333241"
+    ["suse-enterprise"]="013907871322"
+    ["ubuntu-lts"]="099720109477"
+)
+
+AMI_FILTERS=(
+    ["aws-amazon"]="al2023-ami-minimal-2023.*-kernel-6.12-x86_64"
+    ["oracle-linux"]="cloudimg-oel810-lvm-02-01-2025-prod-*"
+    ["rocky-8"]="Rocky-8-EC2-Base-8*x86_64*"
+    ["rocky-9"]="Rocky-9-EC2-Base-9.*x86_64*"
+    ["rocky-latest"]="Rocky-10-EC2-Base-10.*x86_64*"
+    ["opensuse-leap"]="openSUSE-Leap-15-6-*-hvm-ssd-x86_64-*"
+    ["suse-enterprise"]="suse-sles-15-sp6-v20250409-hvm-ssd-x86_64"
+    ["ubuntu-lts"]="*ubuntu-jammy-22.04-amd64-minimal-2025*"
+)
+
+DEFAULT_USERNAMES=(
+    ["aws-amazon"]="ec2-user"
+    ["oracle-linux"]="ec2-user"
+    ["rocky-8"]="rocky"
+    ["rocky-9"]="rocky"
+    ["rocky-latest"]="rocky"
+    ["opensuse-leap"]="ec2-user"
+    ["suse-enterprise"]="ec2-user"
+    ["ubuntu-lts"]="ubuntu"
+)
+
+# Define directory name mappings
+DIR_NAMES=(
+    ["aws-amazon"]="amazon-linux-2023"
+    ["oracle-linux"]="oracle-linux-810"
+    ["rocky-8"]="rocky-linux-8"
+    ["rocky-9"]="rocky-linux-9"
+    ["rocky-latest"]="rocky-linux-10"
+    ["opensuse-leap"]="opensuse-156"
+    ["suse-enterprise"]="suse-15sp6"
+    ["ubuntu-lts"]="ubuntu-2204"
+)
+
+# =============================================================================
+# EXTENSIONS AND OVERRIDES
+# =============================================================================
+# Add your extensions or overrides below this line
+
+# Example 1: EXTEND defaults by adding new options with descriptive keys
+# OS_OPTIONS["centos-stream"]="CentOS Stream 9"
+# AMI_OWNERS["centos-stream"]="125523088429"
+# AMI_FILTERS["centos-stream"]="CentOS-Stream-ec2-9-*x86_64*"
+# DEFAULT_USERNAMES["centos-stream"]="centos"
+# DIR_NAMES["centos-stream"]="centos-stream-9"
+
+# OS_OPTIONS["fedora-latest"]="Fedora 39"
+# AMI_OWNERS["fedora-latest"]="125523088429"
+# AMI_FILTERS["fedora-latest"]="Fedora-Cloud-Base-39-*-gp3-hvm-x86_64-*"
+# DEFAULT_USERNAMES["fedora-latest"]="fedora"
+# DIR_NAMES["fedora-latest"]="fedora-39"
+
+# Example 2: OVERRIDE specific default (modify Amazon Linux)
+# OS_OPTIONS["aws-amazon"]="Amazon Linux 2023 (Custom Build)"
+# AMI_FILTERS["aws-amazon"]="al2023-ami-minimal-2023.6.*-kernel-6.12-x86_64"
+
+# Example 3: COMPLETELY OVERRIDE all defaults
+# To completely replace all options with descriptive keys:
+#
+# unset OS_OPTIONS AMI_OWNERS AMI_FILTERS DEFAULT_USERNAMES DIR_NAMES
+# 
+# OS_OPTIONS=(
+#     ["my-custom-os"]="My Custom OS 1"
+#     ["another-custom"]="My Custom OS 2"
+#     ["third-option"]="My Custom OS 3"
+# )
+# 
+# AMI_OWNERS=(
+#     ["my-custom-os"]="123456789012"
+#     ["another-custom"]="123456789012"
+#     ["third-option"]="123456789012"
+# )
+# 
+# AMI_FILTERS=(
+#     ["my-custom-os"]="my-custom-ami-1-*"
+#     ["another-custom"]="my-custom-ami-2-*"
+#     ["third-option"]="my-custom-ami-3-*"
+# )
+# 
+# DEFAULT_USERNAMES=(
+#     ["my-custom-os"]="myuser"
+#     ["another-custom"]="myuser"
+#     ["third-option"]="myuser"
+# )
+# 
+# DIR_NAMES=(
+#     ["my-custom-os"]="custom-os-1"
+#     ["another-custom"]="custom-os-2"
+#     ["third-option"]="custom-os-3"
+# )
+
+echo "OS configuration loaded successfully! Available options: ${!OS_OPTIONS[*]}"

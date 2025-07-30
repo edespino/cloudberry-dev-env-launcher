@@ -1,0 +1,92 @@
+# Extended OS Configuration Example with Descriptive Keys
+# This shows a comprehensive set of OS options organized by family
+
+os_options:
+  # Cloud Provider AMIs
+  aws-amazon:
+    name: "Amazon Linux 2023"
+    ami_owner: "137112412989"
+    ami_filter: "al2023-ami-minimal-2023.*-kernel-6.12-x86_64"
+    username: "ec2-user"
+    dir_name: "amazon-linux-2023"
+    
+  # Enterprise Linux Family
+  oracle-linux:
+    name: "Oracle Linux 8.10"
+    ami_owner: "679593333241"
+    ami_filter: "cloudimg-oel810-lvm-02-01-2025-prod-*"
+    username: "ec2-user"
+    dir_name: "oracle-linux-810"
+    
+  rocky-8:
+    name: "Rocky Linux 8"
+    ami_owner: "679593333241"
+    ami_filter: "Rocky-8-EC2-Base-8*x86_64*"
+    username: "rocky"
+    dir_name: "rocky-linux-8"
+    
+  rocky-9:
+    name: "Rocky Linux 9"
+    ami_owner: "679593333241"
+    ami_filter: "Rocky-9-EC2-Base-9.*x86_64*"
+    username: "rocky"
+    dir_name: "rocky-linux-9"
+    
+  rocky-latest:
+    name: "Rocky Linux 10"
+    ami_owner: "679593333241"
+    ami_filter: "Rocky-10-EC2-Base-10.*x86_64*"
+    username: "rocky"
+    dir_name: "rocky-linux-10"
+    
+  centos-stream:
+    name: "CentOS Stream 9"
+    ami_owner: "125523088429"
+    ami_filter: "CentOS-Stream-ec2-9-*x86_64*"
+    username: "centos"
+    dir_name: "centos-stream-9"
+    
+  # SUSE Family
+  opensuse-leap:
+    name: "OpenSUSE 15.6"
+    ami_owner: "679593333241"
+    ami_filter: "openSUSE-Leap-15-6-*-hvm-ssd-x86_64-*"
+    username: "ec2-user"
+    dir_name: "opensuse-156"
+    
+  suse-enterprise:
+    name: "SUSE 15 SP6"
+    ami_owner: "013907871322"
+    ami_filter: "suse-sles-15-sp6-v20250409-hvm-ssd-x86_64"
+    username: "ec2-user"
+    dir_name: "suse-15sp6"
+    
+  # Debian Family
+  ubuntu-lts:
+    name: "Ubuntu 22.04 (Jammy)"
+    ami_owner: "099720109477"
+    ami_filter: "*ubuntu-jammy-22.04-amd64-minimal-2025*"
+    username: "ubuntu"
+    dir_name: "ubuntu-2204"
+    
+  ubuntu-newest:
+    name: "Ubuntu 24.04 LTS (Noble)"
+    ami_owner: "099720109477"
+    ami_filter: "*ubuntu-noble-24.04-amd64-*"
+    username: "ubuntu"
+    dir_name: "ubuntu-2404"
+    
+  debian-stable:
+    name: "Debian 12 (Bookworm)"
+    ami_owner: "679593333241"
+    ami_filter: "debian-12-amd64-*"
+    username: "admin"
+    dir_name: "debian-12"
+    
+  # Community Linux
+  fedora-latest:
+    name: "Fedora 39"
+    ami_owner: "125523088429"
+    ami_filter: "Fedora-Cloud-Base-39-*-gp3-hvm-x86_64-*"
+    username: "fedora"
+    dir_name: "fedora-39"

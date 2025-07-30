@@ -12,63 +12,13 @@ REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 ENVIRONMENTS_DIR="$REPO_ROOT/environments"
 TEMPLATE_DIR="$ENVIRONMENTS_DIR/multi-os-sample"
 
-# Define OS options
-declare -A OS_OPTIONS=(
-    ["1"]="Amazon Linux 2023"
-    ["2"]="Oracle Linux 8.10"
-    ["3"]="Rocky Linux 8"
-    ["4"]="Rocky Linux 9"
-    ["5"]="Rocky Linux 10"
-    ["6"]="OpenSUSE 15.6"
-    ["7"]="SUSE 15 SP6"
-    ["8"]="Ubuntu 22.04 (Jammy)"
-)
-
-# Define corresponding AMI configurations
-declare -A AMI_OWNERS=(
-    ["1"]="137112412989"
-    ["2"]="679593333241"
-    ["3"]="679593333241"
-    ["4"]="679593333241"
-    ["5"]="679593333241"
-    ["6"]="679593333241"
-    ["7"]="013907871322"
-    ["8"]="099720109477"
-)
-
-declare -A AMI_FILTERS=(
-    ["1"]="al2023-ami-minimal-2023.*-kernel-6.12-x86_64"
-    ["2"]="cloudimg-oel810-lvm-02-01-2025-prod-*"
-    ["3"]="Rocky-8-EC2-Base-8*x86_64*"
-    ["4"]="Rocky-9-EC2-Base-9.*x86_64*"
-    ["5"]="Rocky-10-EC2-Base-10.*x86_64*"
-    ["6"]="openSUSE-Leap-15-6-*-hvm-ssd-x86_64-*"
-    ["7"]="suse-sles-15-sp6-v20250409-hvm-ssd-x86_64"
-    ["8"]="*ubuntu-jammy-22.04-amd64-minimal-2025*"
-)
-
-declare -A DEFAULT_USERNAMES=(
-    ["1"]="ec2-user"
-    ["2"]="ec2-user"
-    ["3"]="rocky"
-    ["4"]="rocky"
-    ["5"]="rocky"
-    ["6"]="ec2-user"
-    ["7"]="ec2-user"
-    ["8"]="ubuntu"
-)
-
-# Define directory name mappings
-declare -A DIR_NAMES=(
-    ["1"]="amazon-linux-2023"
-    ["2"]="oracle-linux-810"
-    ["3"]="rocky-linux-8"
-    ["4"]="rocky-linux-9"
-    ["5"]="rocky-linux-10"
-    ["6"]="opensuse-156"
-    ["7"]="suse-15sp6"
-    ["8"]="ubuntu-2204"
-)
+# Initialize empty arrays - defaults will be loaded from config
+declare -A OS_OPTIONS
+declare -A AMI_OWNERS
+declare -A AMI_FILTERS
+declare -A DEFAULT_USERNAMES
+declare -A DIR_NAMES
+declare -A SELECTION_MAP
 
 # Colors for output
 RED='\033[0;31m'
@@ -78,6 +28,67 @@ BLUE='\033[0;34m'
 PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
+
+# Function to load YAML configuration
+load_yaml_config() {
+    local yaml_file="$1"
+    
+    # Check if yq is available
+    if ! command -v yq &> /dev/null; then
+        echo -e "${RED}❌ yq command not found. Please install yq to use YAML config files.${NC}"
+        echo -e "${YELLOW}💡 Install with: brew install yq${NC}"
+        exit 1
+    fi
+    
+    # Parse YAML and populate arrays
+    local keys=$(yq eval '.os_options | keys | .[]' "$yaml_file")
+    
+    for key in $keys; do
+        OS_OPTIONS["$key"]=$(yq eval ".os_options[\"$key\"].name" "$yaml_file")
+        AMI_OWNERS["$key"]=$(yq eval ".os_options[\"$key\"].ami_owner" "$yaml_file")
+        AMI_FILTERS["$key"]=$(yq eval ".os_options[\"$key\"].ami_filter" "$yaml_file")
+        DEFAULT_USERNAMES["$key"]=$(yq eval ".os_options[\"$key\"].username" "$yaml_file")
+        DIR_NAMES["$key"]=$(yq eval ".os_options[\"$key\"].dir_name" "$yaml_file")
+    done
+    
+    echo "YAML configuration loaded successfully! Available options: ${!OS_OPTIONS[*]}"
+}
+
+
+# Load OS configurations (required)
+# Priority: YAML > Bash (simplified)
+CUSTOM_CONFIG_YAML="${CUSTOM_CONFIG_YAML:-$REPO_ROOT/config/os-config.yaml}"
+CUSTOM_CONFIG_BASH="${CUSTOM_CONFIG_BASH:-$REPO_ROOT/config/os-config.sh}"
+
+# Check for multiple config files and warn user
+config_files_found=()
+[[ -f "$CUSTOM_CONFIG_YAML" ]] && config_files_found+=("YAML: $CUSTOM_CONFIG_YAML")
+[[ -f "$CUSTOM_CONFIG_BASH" ]] && config_files_found+=("Bash: $CUSTOM_CONFIG_BASH")
+
+if [[ ${#config_files_found[@]} -gt 1 ]]; then
+    echo -e "${YELLOW}⚠️  Multiple configuration files found:${NC}"
+    for config in "${config_files_found[@]}"; do
+        echo -e "   - $config"
+    done
+    echo -e "${YELLOW}💡 Using priority: YAML > Bash${NC}"
+    echo
+fi
+
+# Load the highest priority config file
+if [[ -f "$CUSTOM_CONFIG_YAML" ]]; then
+    echo -e "${BLUE}📄 Loading OS configurations from $CUSTOM_CONFIG_YAML${NC}"
+    load_yaml_config "$CUSTOM_CONFIG_YAML"
+elif [[ -f "$CUSTOM_CONFIG_BASH" ]]; then
+    echo -e "${BLUE}📄 Loading OS configurations from $CUSTOM_CONFIG_BASH${NC}"
+    source "$CUSTOM_CONFIG_BASH"
+else
+    echo -e "${RED}❌ No configuration file found${NC}"
+    echo -e "${YELLOW}💡 Create one of:${NC}"
+    echo -e "   - ${CYAN}$CUSTOM_CONFIG_YAML${NC} (YAML format - recommended)"
+    echo -e "   - ${CYAN}$CUSTOM_CONFIG_BASH${NC} (Bash format - legacy)"
+    echo -e "${YELLOW}💡 See config/README.md for examples${NC}"
+    exit 1
+fi
 
 # Function to display header
 show_header() {
@@ -91,8 +102,20 @@ show_header() {
 show_options() {
     echo -e "${YELLOW}Available Operating Systems:${NC}"
     echo
-    for key in {1..8}; do
-        echo -e "  ${GREEN}[$key]${NC} ${OS_OPTIONS[$key]} ${PURPLE}(${DIR_NAMES[$key]})${NC}"
+    # Get all keys and sort them (numeric first, then alphabetic)
+    local keys=($(printf '%s\n' "${!OS_OPTIONS[@]}" | sort -V))
+    local counter=1
+    
+    # Clear and rebuild the selection mapping
+    unset SELECTION_MAP
+    declare -gA SELECTION_MAP
+    
+    for key in "${keys[@]}"; do
+        if [[ -n "${OS_OPTIONS[$key]}" ]]; then
+            echo -e "  ${GREEN}[$counter]${NC} ${OS_OPTIONS[$key]} ${PURPLE}(${DIR_NAMES[$key]})${NC}"
+            SELECTION_MAP["$counter"]="$key"
+            ((counter++))
+        fi
     done
     echo
 }
@@ -100,11 +123,22 @@ show_options() {
 # Function to validate selection
 validate_selection() {
     local selection=$1
-    if [[ ! $selection =~ ^[1-8]$ ]]; then
-        echo -e "${RED}❌ Invalid selection. Please choose 1-8.${NC}"
+    
+    # Check if selection is empty
+    if [[ -z "$selection" ]]; then
+        local max_choice=${#SELECTION_MAP[@]}
+        echo -e "${RED}❌ Please enter a selection (1-${max_choice}) or 'q' to quit.${NC}"
         return 1
     fi
-    return 0
+    
+    # Check if selection is a valid numeric choice
+    if [[ -n "${SELECTION_MAP[$selection]}" ]]; then
+        return 0
+    else
+        local max_choice=${#SELECTION_MAP[@]}
+        echo -e "${RED}❌ Invalid selection. Please choose 1-${max_choice}.${NC}"
+        return 1
+    fi
 }
 
 # Function to check if template exists
@@ -119,11 +153,12 @@ check_template() {
 # Function to display selected configuration
 show_configuration() {
     local selection=$1
-    local os_name="${OS_OPTIONS[$selection]}"
-    local dir_name="${DIR_NAMES[$selection]}"
-    local ami_owner="${AMI_OWNERS[$selection]}"
-    local ami_filter="${AMI_FILTERS[$selection]}"
-    local username="${DEFAULT_USERNAMES[$selection]}"
+    local actual_key="${SELECTION_MAP[$selection]}"
+    local os_name="${OS_OPTIONS[$actual_key]}"
+    local dir_name="${DIR_NAMES[$actual_key]}"
+    local ami_owner="${AMI_OWNERS[$actual_key]}"
+    local ami_filter="${AMI_FILTERS[$actual_key]}"
+    local username="${DEFAULT_USERNAMES[$actual_key]}"
     
     echo
     echo -e "${GREEN}✅ Selected: ${CYAN}$os_name${NC}"
@@ -140,11 +175,12 @@ show_configuration() {
 create_environment() {
     local selection=$1
     local custom_name="$2"
-    local os_name="${OS_OPTIONS[$selection]}"
-    local dir_name="${DIR_NAMES[$selection]}"
-    local ami_owner="${AMI_OWNERS[$selection]}"
-    local ami_filter="${AMI_FILTERS[$selection]}"
-    local username="${DEFAULT_USERNAMES[$selection]}"
+    local actual_key="${SELECTION_MAP[$selection]}"
+    local os_name="${OS_OPTIONS[$actual_key]}"
+    local dir_name="${DIR_NAMES[$actual_key]}"
+    local ami_owner="${AMI_OWNERS[$actual_key]}"
+    local ami_filter="${AMI_FILTERS[$actual_key]}"
+    local username="${DEFAULT_USERNAMES[$actual_key]}"
     
     # Use custom name if provided, otherwise use default
     local target_name="${custom_name:-$dir_name}"
@@ -492,7 +528,8 @@ get_os_selection() {
     while true; do
         show_options
         
-        echo -n -e "${YELLOW}Select an OS [1-8] or 'q' to quit: ${NC}"
+        local max_choice=${#SELECTION_MAP[@]}
+        echo -n -e "${YELLOW}Select an OS [1-${max_choice}] or 'q' to quit: ${NC}"
         read -r selection
         
         # Check for quit
@@ -515,11 +552,12 @@ get_os_selection() {
 # Function to get directory name choice
 get_directory_name() {
     local selection=$1
+    local actual_key="${SELECTION_MAP[$selection]}"
     local custom_name=""
     
     while true; do
         echo -e "${YELLOW}Directory name options:${NC}"
-        echo -e "  ${GREEN}[1]${NC} Use default name: ${CYAN}${DIR_NAMES[$selection]}${NC} ${PURPLE}(default)${NC}"
+        echo -e "  ${GREEN}[1]${NC} Use default name: ${CYAN}${DIR_NAMES[$actual_key]}${NC} ${PURPLE}(default)${NC}"
         echo -e "  ${GREEN}[2]${NC} Enter custom name"
         echo -e "  ${GREEN}[b]${NC} Back to OS selection"
         echo
@@ -571,17 +609,18 @@ get_directory_name() {
 confirm_creation() {
     local selection=$1
     local custom_name="$2"
-    local os_name="${OS_OPTIONS[$selection]}"
-    local dir_name="${custom_name:-${DIR_NAMES[$selection]}}"
+    local actual_key="${SELECTION_MAP[$selection]}"
+    local os_name="${OS_OPTIONS[$actual_key]}"
+    local dir_name="${custom_name:-${DIR_NAMES[$actual_key]}}"
     
     while true; do
         echo
         echo -e "${CYAN}📋 Summary:${NC}"
         echo -e "  ${PURPLE}OS:${NC} $os_name"
         echo -e "  ${PURPLE}Directory:${NC} $dir_name"
-        echo -e "  ${PURPLE}AMI Owner:${NC} ${AMI_OWNERS[$selection]}"
-        echo -e "  ${PURPLE}AMI Filter:${NC} ${AMI_FILTERS[$selection]}"
-        echo -e "  ${PURPLE}Username:${NC} ${DEFAULT_USERNAMES[$selection]}"
+        echo -e "  ${PURPLE}AMI Owner:${NC} ${AMI_OWNERS[$actual_key]}"
+        echo -e "  ${PURPLE}AMI Filter:${NC} ${AMI_FILTERS[$actual_key]}"
+        echo -e "  ${PURPLE}Username:${NC} ${DEFAULT_USERNAMES[$actual_key]}"
         echo
         echo -e "${YELLOW}Actions:${NC}"
         echo -e "  ${GREEN}[c]${NC} Create environment ${PURPLE}(default)${NC}"
