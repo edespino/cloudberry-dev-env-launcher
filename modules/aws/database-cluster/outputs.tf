@@ -20,6 +20,11 @@ output "vpc_id" {
   value       = aws_vpc.main.id
 }
 
+output "subnet_id" {
+  description = "Public subnet ID"
+  value       = aws_subnet.public.id
+}
+
 output "instance_ids" {
   description = "EC2 instance IDs"
   value       = aws_instance.database_instances[*].id

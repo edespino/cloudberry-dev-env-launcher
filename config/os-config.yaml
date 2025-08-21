@@ -13,86 +13,103 @@ os_options:
 ## Cloudberry custom AMIs
 ## ----------------------------------------------------------------------
 
-  amazon-linux-2023-test:
-    name: "Amazon Linux 2023 - Cloudberry Test"
+  rocky-linux-9-synxdb-build:
+    name: "Rocky Linux 9 - SynxDB build"
     ami_owner: "703671893074"
-    ami_filter: "packer-build-al2023-cbdb-*"
-    username: "ec2-user"
-    dir_name: "amazon-linux-2023-test"
+    ami_filter: "packer-build-rocky9-synxdb-*"
+    username: "rocky"
+    dir_name: "rl9-synxdb-build"
+
+## ----------------------------------------------------------------------
+## Cloudberry custom AMIs
+## ----------------------------------------------------------------------
 
   rocky-linux-8-cbdb-build:
     name: "Rocky Linux 8 - Cloudberry build"
     ami_owner: "703671893074"
-    ami_filter: "packer-build-rocky8-cbdb-*"
+    ami_filter: "cloudberry-packer-build-rocky8-*"
     username: "rocky"
-    dir_name: "rocky-linux-8-cbdb-build"
+    dir_name: "rl8-cbdb-build"
 
   rocky-linux-9-cbdb-build:
     name: "Rocky Linux 9 - Cloudberry build"
     ami_owner: "703671893074"
-    ami_filter: "packer-build-rocky9-cbdb-*"
+    ami_filter: "cloudberry-packer-build-rocky9-*"
     username: "rocky"
-    dir_name: "rocky-linux-9-cbdb-build"
+    dir_name: "rl9-cbdb-build"
+
+  ubuntu-22-cbdb-build:
+    name: "Ubuntu 22.04 - Cloudberry build"
+    ami_owner: "703671893074"
+    ami_filter: "cloudberry-packer-build-ubuntu22-*"
+    username: "ubuntu"
+    dir_name: "u22-cbdb-build"
 
 ## ----------------------------------------------------------------------
 ## Defaults
 ## ----------------------------------------------------------------------
 
-  aws-amazon:
+  amazon-linux-2023:
     name: "Amazon Linux 2023"
     ami_owner: "137112412989"
     ami_filter: "al2023-ami-minimal-2023.*-kernel-6.12-x86_64"
     username: "ec2-user"
-    dir_name: "amazon-linux-2023"
+    dir_name: "al23"
 
-  # Enterprise Linux Family
-  oracle-linux:
+  centos7:
+    name: "CentOS 7"
+    ami_owner: "646674727875"
+    ami_filter: "Gigabits-CentOS Linux 7"
+    username: "centos"
+    dir_name: "centos7"
+
+  oracle-linux-810:
     name: "Oracle Linux 8.10"
     ami_owner: "679593333241"
     ami_filter: "cloudimg-oel810-lvm-02-01-2025-prod-*"
     username: "ec2-user"
-    dir_name: "oracle-linux-810"
+    dir_name: "ol8"
 
-  rocky-8:
+  rocky-linux-8:
     name: "Rocky Linux 8"
     ami_owner: "679593333241"
     ami_filter: "Rocky-8-EC2-Base-8*x86_64*"
     username: "rocky"
-    dir_name: "rocky-linux-8"
+    dir_name: "rl8"
 
-  rocky-9:
+  rocky-linux-9:
     name: "Rocky Linux 9"
     ami_owner: "679593333241"
     ami_filter: "Rocky-9-EC2-Base-9.*x86_64*"
     username: "rocky"
-    dir_name: "rocky-linux-9"
+    dir_name: "rl9"
 
-  rocky-latest:
+  rocky-linux-10:
     name: "Rocky Linux 10"
     ami_owner: "679593333241"
     ami_filter: "Rocky-10-EC2-Base-10.*x86_64*"
     username: "rocky"
-    dir_name: "rocky-linux-10"
+    dir_name: "rl10"
 
   # SUSE Family
-  opensuse-leap:
+  opensuse-15-6:
     name: "OpenSUSE 15.6"
     ami_owner: "679593333241"
     ami_filter: "openSUSE-Leap-15-6-*-hvm-ssd-x86_64-*"
     username: "ec2-user"
-    dir_name: "opensuse-156"
+    dir_name: "osuse15"
 
-  suse-enterprise:
+  suse-15sp6:
     name: "SUSE 15 SP6"
     ami_owner: "013907871322"
     ami_filter: "suse-sles-15-sp6-v20250409-hvm-ssd-x86_64"
     username: "ec2-user"
-    dir_name: "suse-15sp6"
+    dir_name: "suse15"
 
   # Debian Family
-  ubuntu-lts:
+  ubuntu-2204:
     name: "Ubuntu 22.04 (Jammy)"
     ami_owner: "099720109477"
     ami_filter: "*ubuntu-jammy-22.04-amd64-minimal-2025*"
     username: "ubuntu"
-    dir_name: "ubuntu-2204"
+    dir_name: "u22"
