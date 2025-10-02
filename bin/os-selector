@@ -14,6 +14,7 @@ TEMPLATE_DIR="$ENVIRONMENTS_DIR/multi-os-sample"
 
 # Initialize empty arrays - defaults will be loaded from config
 declare -A OS_OPTIONS
+declare -A OS_GROUPS
 declare -A AMI_OWNERS
 declare -A AMI_FILTERS
 declare -A DEFAULT_USERNAMES
@@ -42,9 +43,10 @@ load_yaml_config() {
     
     # Parse YAML and populate arrays
     local keys=$(yq eval '.os_options | keys | .[]' "$yaml_file")
-    
+
     for key in $keys; do
         OS_OPTIONS["$key"]=$(yq eval ".os_options[\"$key\"].name" "$yaml_file")
+        OS_GROUPS["$key"]=$(yq eval ".os_options[\"$key\"].group" "$yaml_file")
         AMI_OWNERS["$key"]=$(yq eval ".os_options[\"$key\"].ami_owner" "$yaml_file")
         AMI_FILTERS["$key"]=$(yq eval ".os_options[\"$key\"].ami_filter" "$yaml_file")
         DEFAULT_USERNAMES["$key"]=$(yq eval ".os_options[\"$key\"].username" "$yaml_file")
@@ -98,26 +100,45 @@ show_header() {
     echo
 }
 
-# Function to display OS options
+# Function to display OS options grouped
 show_options() {
     echo -e "${YELLOW}Available Operating Systems:${NC}"
     echo
-    # Get all keys and sort them (numeric first, then alphabetic)
-    local keys=($(printf '%s\n' "${!OS_OPTIONS[@]}" | sort -V))
-    local counter=1
-    
+
     # Clear and rebuild the selection mapping
     unset SELECTION_MAP
     declare -gA SELECTION_MAP
-    
+
+    local counter=1
+    local current_group=""
+
+    # Get all keys and sort them (numeric first, then alphabetic)
+    local keys=($(printf '%s\n' "${!OS_OPTIONS[@]}" | sort -V))
+
+    # First, collect unique groups in order of appearance
+    local -a group_order=()
     for key in "${keys[@]}"; do
-        if [[ -n "${OS_OPTIONS[$key]}" ]]; then
-            echo -e "  ${GREEN}[$counter]${NC} ${OS_OPTIONS[$key]} ${PURPLE}(${DIR_NAMES[$key]})${NC}"
-            SELECTION_MAP["$counter"]="$key"
-            ((counter++))
+        local group="${OS_GROUPS[$key]}"
+        if [[ -n "$group" ]] && [[ ! " ${group_order[@]} " =~ " ${group} " ]]; then
+            group_order+=("$group")
         fi
     done
-    echo
+
+    # Display options grouped
+    for group in "${group_order[@]}"; do
+        # Display group header
+        echo -e "${CYAN}${group}:${NC}"
+
+        # Display items in this group
+        for key in "${keys[@]}"; do
+            if [[ "${OS_GROUPS[$key]}" == "$group" && -n "${OS_OPTIONS[$key]}" ]]; then
+                echo -e "  ${GREEN}[$counter]${NC} ${OS_OPTIONS[$key]} ${PURPLE}(${DIR_NAMES[$key]})${NC}"
+                SELECTION_MAP["$counter"]="$key"
+                ((counter++))
+            fi
+        done
+        echo
+    done
 }
 
 # Function to validate selection

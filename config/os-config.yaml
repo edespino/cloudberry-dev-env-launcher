@@ -10,106 +10,138 @@
 os_options:
 
 ## ----------------------------------------------------------------------
-## Cloudberry custom AMIs
+## Cloudberry Packer custom AMIs
+## (Listed first as they are pre-configured for Cloudberry development)
 ## ----------------------------------------------------------------------
 
-  rocky-linux-9-synxdb-build:
-    name: "Rocky Linux 9 - SynxDB build"
+  al2023-cbdb-build:
+    name: "Amazon Linux 2023 - Cloudberry build"
+    group: "Cloudberry Packer custom AMIs"
     ami_owner: "703671893074"
-    ami_filter: "packer-build-rocky9-synxdb-*"
-    username: "rocky"
-    dir_name: "rl9-synxdb-build"
+    ami_filter: "cloudberry-packer-build-al2023-*"
+    username: "ec2-user"
+    dir_name: "al2023-cbdb-build"
 
-## ----------------------------------------------------------------------
-## Cloudberry custom AMIs
-## ----------------------------------------------------------------------
-
-  rocky-linux-8-cbdb-build:
+  rl8-cbdb-build:
     name: "Rocky Linux 8 - Cloudberry build"
+    group: "Cloudberry Packer custom AMIs"
     ami_owner: "703671893074"
     ami_filter: "cloudberry-packer-build-rocky8-*"
     username: "rocky"
     dir_name: "rl8-cbdb-build"
 
-  rocky-linux-9-cbdb-build:
+  rl9-cbdb-build:
     name: "Rocky Linux 9 - Cloudberry build"
+    group: "Cloudberry Packer custom AMIs"
     ami_owner: "703671893074"
     ami_filter: "cloudberry-packer-build-rocky9-*"
     username: "rocky"
     dir_name: "rl9-cbdb-build"
 
-  ubuntu-22-cbdb-build:
+  rl10-cbdb-build:
+    name: "Rocky Linux 10 - Cloudberry build"
+    group: "Cloudberry Packer custom AMIs"
+    ami_owner: "703671893074"
+    ami_filter: "cloudberry-packer-build-rocky10-*"
+    username: "rocky"
+    dir_name: "rl10-cbdb-build"
+
+  ubuntu20-cbdb-build:
+    name: "Ubuntu 20.04 - Cloudberry build"
+    group: "Cloudberry Packer custom AMIs"
+    ami_owner: "703671893074"
+    ami_filter: "cloudberry-packer-build-ubuntu20-*"
+    username: "ubuntu"
+    dir_name: "ubuntu20-cbdb-build"
+
+  ubuntu22-cbdb-build:
     name: "Ubuntu 22.04 - Cloudberry build"
+    group: "Cloudberry Packer custom AMIs"
     ami_owner: "703671893074"
     ami_filter: "cloudberry-packer-build-ubuntu22-*"
     username: "ubuntu"
-    dir_name: "u22-cbdb-build"
+    dir_name: "ubuntu22-cbdb-build"
 
 ## ----------------------------------------------------------------------
-## Defaults
+## Base AMIs
 ## ----------------------------------------------------------------------
 
-  amazon-linux-2023:
+  al2023-base:
     name: "Amazon Linux 2023"
+    group: "Base AMIs"
     ami_owner: "137112412989"
-    ami_filter: "al2023-ami-minimal-2023.*-kernel-6.12-x86_64"
+    ami_filter: "al2023-ami-minimal-2023.*-kernel-6.1-x86_64"
     username: "ec2-user"
-    dir_name: "al23"
+    dir_name: "al2023-base"
 
-  centos7:
-    name: "CentOS 7"
-    ami_owner: "646674727875"
-    ami_filter: "Gigabits-CentOS Linux 7"
-    username: "centos"
-    dir_name: "centos7"
-
-  oracle-linux-810:
+  ol810-base:
     name: "Oracle Linux 8.10"
+    group: "Base AMIs"
     ami_owner: "679593333241"
     ami_filter: "cloudimg-oel810-lvm-02-01-2025-prod-*"
     username: "ec2-user"
-    dir_name: "ol8"
+    dir_name: "ol810-base"
 
-  rocky-linux-8:
+  rl8-base:
     name: "Rocky Linux 8"
+    group: "Base AMIs"
     ami_owner: "679593333241"
     ami_filter: "Rocky-8-EC2-Base-8*x86_64*"
     username: "rocky"
-    dir_name: "rl8"
+    dir_name: "rl8-base"
 
-  rocky-linux-9:
+  rl9-base:
     name: "Rocky Linux 9"
+    group: "Base AMIs"
     ami_owner: "679593333241"
     ami_filter: "Rocky-9-EC2-Base-9.*x86_64*"
     username: "rocky"
-    dir_name: "rl9"
+    dir_name: "rl9-base"
 
-  rocky-linux-10:
+  rl10-base:
     name: "Rocky Linux 10"
+    group: "Base AMIs"
     ami_owner: "679593333241"
     ami_filter: "Rocky-10-EC2-Base-10.*x86_64*"
     username: "rocky"
-    dir_name: "rl10"
+    dir_name: "rl10-base"
 
-  # SUSE Family
-  opensuse-15-6:
+  opensuse156-base:
     name: "OpenSUSE 15.6"
+    group: "Base AMIs"
     ami_owner: "679593333241"
     ami_filter: "openSUSE-Leap-15-6-*-hvm-ssd-x86_64-*"
     username: "ec2-user"
-    dir_name: "osuse15"
+    dir_name: "opensuse156-base"
 
-  suse-15sp6:
+  suse15sp6-base:
     name: "SUSE 15 SP6"
+    group: "Base AMIs"
     ami_owner: "013907871322"
     ami_filter: "suse-sles-15-sp6-v20250409-hvm-ssd-x86_64"
     username: "ec2-user"
-    dir_name: "suse15"
+    dir_name: "suse15sp6-base"
 
-  # Debian Family
-  ubuntu-2204:
-    name: "Ubuntu 22.04 (Jammy)"
+  ubuntu20-base:
+    name: "Ubuntu 20.04"
+    group: "Base AMIs"
+    ami_owner: "099720109477"
+    ami_filter: "*ubuntu-focal-20.04-amd64-server-*"
+    username: "ubuntu"
+    dir_name: "ubuntu20-base"
+
+  ubuntu22-base:
+    name: "Ubuntu 22.04"
+    group: "Base AMIs"
     ami_owner: "099720109477"
     ami_filter: "*ubuntu-jammy-22.04-amd64-minimal-2025*"
     username: "ubuntu"
-    dir_name: "u22"
+    dir_name: "ubuntu22-base"
+
+  ubuntu24-base:
+    name: "Ubuntu 24.04"
+    group: "Base AMIs"
+    ami_owner: "099720109477"
+    ami_filter: "*ubuntu-noble-24.04-amd64-minimal-2025*"
+    username: "ubuntu"
+    dir_name: "ubuntu24-base"
