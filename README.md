@@ -8,7 +8,8 @@ This repository provides Terraform modules and configurations to deploy scalable
 
 ## Features
 
-- **Interactive OS Selection**: Choose from 8+ operating systems with guided setup
+- **Interactive OS Selection**: Choose from 15+ operating systems with guided setup and grouped display
+- **Custom Cloudberry AMIs**: Pre-configured images from Synx Data Labs with build dependencies
 - **Simple Setup**: Local state files by default - no S3/DynamoDB required
 - **Automated Infrastructure**: Complete AWS infrastructure provisioning
 - **Multi-OS Support**: Amazon Linux, Rocky Linux, Ubuntu, SUSE, Oracle Linux
@@ -145,12 +146,19 @@ Interactive tool for creating new environments with your preferred operating sys
 - Default selections for quick setup
 
 **Supported Operating Systems:**
+
+*Cloudberry Packer Custom AMIs* (provided by Synx Data Labs in us-west-2):
+- Amazon Linux 2023 - Cloudberry build
+- Rocky Linux 8, 9, 10 - Cloudberry build
+- Ubuntu 20.04, 22.04 - Cloudberry build
+
+*Base AMIs*:
 - Amazon Linux 2023
 - Oracle Linux 8.10
 - Rocky Linux 8, 9, 10
 - OpenSUSE 15.6
 - SUSE Linux Enterprise 15 SP6
-- Ubuntu 22.04 (Jammy)
+- Ubuntu 20.04, 22.04, 24.04
 
 ### Spot Instance Checker (`bin/spot-check`)
 

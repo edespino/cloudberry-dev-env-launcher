@@ -176,6 +176,15 @@ Base AMIs:
 - Groups appear in order of first occurrence
 - Flexible - you can define any group names
 
+### Cloudberry Packer Custom AMIs
+
+The "Cloudberry Packer custom AMIs" group contains pre-configured development images provided by **Synx Data Labs** (AWS Account ID: `703671893074`) in the **us-west-2** region. These images include:
+- Pre-installed Cloudberry Database dependencies
+- Optimized build toolchain and development tools
+- Configured users and permissions for immediate development
+
+**Note**: Access to these custom AMIs requires appropriate AWS permissions to the Synx Data Labs account.
+
 ## Alternative Configuration Files
 
 Set environment variables to use different files:
