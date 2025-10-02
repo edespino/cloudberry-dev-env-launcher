@@ -52,10 +52,15 @@ load_yaml_config() {
         DEFAULT_USERNAMES["$key"]=$(yq eval ".os_options[\"$key\"].username" "$yaml_file")
         DIR_NAMES["$key"]=$(yq eval ".os_options[\"$key\"].dir_name" "$yaml_file")
     done
-    
-    echo "YAML configuration loaded successfully! Available options: ${!OS_OPTIONS[*]}"
+
+    if [[ "$DEBUG" == "1" ]]; then
+        echo "YAML configuration loaded successfully! Available options: ${!OS_OPTIONS[*]}"
+    fi
 }
 
+
+# Debug/verbose mode (set DEBUG=1 to enable verbose output)
+DEBUG="${DEBUG:-0}"
 
 # Load OS configurations (required)
 # Priority: YAML > Bash (simplified)
@@ -67,7 +72,7 @@ config_files_found=()
 [[ -f "$CUSTOM_CONFIG_YAML" ]] && config_files_found+=("YAML: $CUSTOM_CONFIG_YAML")
 [[ -f "$CUSTOM_CONFIG_BASH" ]] && config_files_found+=("Bash: $CUSTOM_CONFIG_BASH")
 
-if [[ ${#config_files_found[@]} -gt 1 ]]; then
+if [[ ${#config_files_found[@]} -gt 1 && "$DEBUG" == "1" ]]; then
     echo -e "${YELLOW}⚠️  Multiple configuration files found:${NC}"
     for config in "${config_files_found[@]}"; do
         echo -e "   - $config"
@@ -78,10 +83,10 @@ fi
 
 # Load the highest priority config file
 if [[ -f "$CUSTOM_CONFIG_YAML" ]]; then
-    echo -e "${BLUE}📄 Loading OS configurations from $CUSTOM_CONFIG_YAML${NC}"
+    [[ "$DEBUG" == "1" ]] && echo -e "${BLUE}📄 Loading OS configurations from $CUSTOM_CONFIG_YAML${NC}"
     load_yaml_config "$CUSTOM_CONFIG_YAML"
 elif [[ -f "$CUSTOM_CONFIG_BASH" ]]; then
-    echo -e "${BLUE}📄 Loading OS configurations from $CUSTOM_CONFIG_BASH${NC}"
+    [[ "$DEBUG" == "1" ]] && echo -e "${BLUE}📄 Loading OS configurations from $CUSTOM_CONFIG_BASH${NC}"
     source "$CUSTOM_CONFIG_BASH"
 else
     echo -e "${RED}❌ No configuration file found${NC}"
@@ -681,6 +686,7 @@ confirm_creation() {
 
 # Main function with navigation flow
 main() {
+    clear
     check_template
     show_header
     
