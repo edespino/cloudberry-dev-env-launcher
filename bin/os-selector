@@ -95,7 +95,7 @@ fi
 # Function to display header
 show_header() {
     echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${BLUE}║${NC}          ${CYAN}Cloudberry Dev Environment OS Selector${NC}          ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC}            ${CYAN}Cloudberry Dev Environment OS Selector${NC}            ${BLUE}║${NC}"
     echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
     echo
 }
