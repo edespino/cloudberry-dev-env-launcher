@@ -8,23 +8,33 @@ This directory contains the OS configuration for the `os-selector` script. The c
 
 **File**: `os-config.yaml`
 
-Clean, structured format using descriptive keys:
+Clean, structured format using descriptive keys with grouping support:
 
 ```yaml
 os_options:
   aws-amazon:
     name: "Amazon Linux 2023"
+    group: "Base AMIs"
     ami_owner: "137112412989"
     ami_filter: "al2023-ami-minimal-2023.*-kernel-6.12-x86_64"
     username: "ec2-user"
     dir_name: "amazon-linux-2023"
-    
+
   centos-stream:
     name: "CentOS Stream 9"
+    group: "Base AMIs"
     ami_owner: "125523088429"
     ami_filter: "CentOS-Stream-ec2-9-*x86_64*"
     username: "centos"
     dir_name: "centos-stream-9"
+
+  cbdb-build-rocky9:
+    name: "Rocky Linux 9 - Cloudberry build"
+    group: "Cloudberry Packer custom AMIs"
+    ami_owner: "703671893074"
+    ami_filter: "cloudberry-packer-build-rocky9-*"
+    username: "rocky"
+    dir_name: "rl9-cbdb-build"
 ```
 
 **Requirements**: `yq` command must be installed (`brew install yq`)
@@ -64,9 +74,10 @@ The script loads only ONE config file with this priority:
 **YAML:**
 ```yaml
 os_options:
-  # ... existing defaults 1-8 ...
-  "9":
+  # ... existing defaults ...
+  fedora39:
     name: "Fedora 39"
+    group: "Base AMIs"
     ami_owner: "125523088429"
     ami_filter: "Fedora-Cloud-Base-39-*-gp3-hvm-x86_64-*"
     username: "fedora"
@@ -86,8 +97,9 @@ AMI_OWNERS["9"]="125523088429"
 **YAML:**
 ```yaml
 os_options:
-  "1":
+  al2023-base:
     name: "Amazon Linux 2023 (Custom)"
+    group: "Base AMIs"
     ami_owner: "137112412989"
     ami_filter: "al2023-ami-minimal-2023.6.*-kernel-6.12-x86_64"
     username: "ec2-user"
@@ -133,13 +145,36 @@ You can use any key names in your configuration files:
 
 ## Required Fields
 
-Each OS option must have all five fields:
+Each OS option must have all six fields:
 
 - **`name`**: Display name shown in menu
+- **`group`**: Group name for organizing options in the display (e.g., "Base AMIs", "Cloudberry Packer custom AMIs")
 - **`ami_owner`**: AWS account ID that owns the AMI
-- **`ami_filter`**: AMI name pattern for AWS filtering  
+- **`ami_filter`**: AMI name pattern for AWS filtering
 - **`username`**: Default SSH username for the OS
 - **`dir_name`**: Environment directory name
+
+## Grouping Options
+
+The `group` field organizes OS options into logical sections in the interactive menu:
+
+```
+Available Operating Systems:
+
+Cloudberry Packer custom AMIs:
+  [1] Rocky Linux 9 - Cloudberry build (rl9-cbdb-build)
+  [2] Ubuntu 22.04 - Cloudberry build (ubuntu22-cbdb-build)
+
+Base AMIs:
+  [3] Amazon Linux 2023 (al2023-base)
+  [4] Rocky Linux 9 (rl9-base)
+```
+
+**Benefits:**
+- Clear visual separation between custom and base images
+- Easier to find the right OS for your needs
+- Groups appear in order of first occurrence
+- Flexible - you can define any group names
 
 ## Alternative Configuration Files
 
