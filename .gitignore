@@ -63,3 +63,12 @@ temp/
 *local*
 override.tf
 override.tf.json
+
+# Generated environment directories
+# os-selector creates these - they should never be committed
+environments/*/
+
+# But keep template files and documentation
+!environments/TEMPLATE-README.md
+!environments/AUTO-SPOT-CHECK.md
+!environments/multi-os-sample/
