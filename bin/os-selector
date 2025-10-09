@@ -30,31 +30,70 @@ PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# Function to load YAML configuration
+# Function to load all YAML configurations matching pattern
 load_yaml_config() {
-    local yaml_file="$1"
-    
+    local config_pattern="$REPO_ROOT/config/os-config-*.yaml"
+    local config_files=($config_pattern)
+
+    # Check if any config files exist
+    if [[ ! -e "${config_files[0]}" ]]; then
+        echo -e "${RED}❌ No configuration files found matching: $config_pattern${NC}"
+        echo -e "${YELLOW}💡 Create at least one config file like: config/os-config-base.yaml${NC}"
+        exit 1
+    fi
+
+    # Sort config files for consistent loading order
+    IFS=$'\n' config_files=($(sort <<<"${config_files[*]}"))
+    unset IFS
+
     # Check if yq is available
     if ! command -v yq &> /dev/null; then
         echo -e "${RED}❌ yq command not found. Please install yq to use YAML config files.${NC}"
         echo -e "${YELLOW}💡 Install with: brew install yq${NC}"
         exit 1
     fi
-    
-    # Parse YAML and populate arrays
-    local keys=$(yq eval '.os_options | keys | .[]' "$yaml_file")
 
-    for key in $keys; do
-        OS_OPTIONS["$key"]=$(yq eval ".os_options[\"$key\"].name" "$yaml_file")
-        OS_GROUPS["$key"]=$(yq eval ".os_options[\"$key\"].group" "$yaml_file")
-        AMI_OWNERS["$key"]=$(yq eval ".os_options[\"$key\"].ami_owner" "$yaml_file")
-        AMI_FILTERS["$key"]=$(yq eval ".os_options[\"$key\"].ami_filter" "$yaml_file")
-        DEFAULT_USERNAMES["$key"]=$(yq eval ".os_options[\"$key\"].username" "$yaml_file")
-        DIR_NAMES["$key"]=$(yq eval ".os_options[\"$key\"].dir_name" "$yaml_file")
+    if [[ "$DEBUG" == "1" ]]; then
+        echo -e "${BLUE}📄 Loading ${#config_files[@]} configuration file(s):${NC}"
+    fi
+
+    # Track groups across files to detect duplicates
+    declare -A groups_seen
+
+    # Load each config file
+    for config_file in "${config_files[@]}"; do
+        if [[ "$DEBUG" == "1" ]]; then
+            echo -e "${BLUE}  Loading: $(basename "$config_file")${NC}"
+        fi
+
+        # Parse YAML and populate arrays
+        local keys=$(yq eval '.os_options | keys | .[]' "$config_file")
+
+        for key in $keys; do
+            # Check for duplicate group names across config files
+            local group=$(yq eval ".os_options[\"$key\"].group" "$config_file")
+            if [[ -n "$group" && -n "${groups_seen[$group]}" && "${groups_seen[$group]}" != "$config_file" ]]; then
+                echo -e "${RED}❌ Error: Duplicate group name '${group}' found${NC}"
+                echo -e "${YELLOW}   First defined in: ${groups_seen[$group]}${NC}"
+                echo -e "${YELLOW}   Also found in: $config_file${NC}"
+                exit 1
+            fi
+            [[ -n "$group" ]] && groups_seen["$group"]="$config_file"
+
+            OS_OPTIONS["$key"]=$(yq eval ".os_options[\"$key\"].name" "$config_file")
+            OS_GROUPS["$key"]="$group"
+            AMI_OWNERS["$key"]=$(yq eval ".os_options[\"$key\"].ami_owner" "$config_file")
+            AMI_FILTERS["$key"]=$(yq eval ".os_options[\"$key\"].ami_filter" "$config_file")
+            DEFAULT_USERNAMES["$key"]=$(yq eval ".os_options[\"$key\"].username" "$config_file")
+            DIR_NAMES["$key"]=$(yq eval ".os_options[\"$key\"].dir_name" "$config_file")
+        done
     done
 
     if [[ "$DEBUG" == "1" ]]; then
-        echo "YAML configuration loaded successfully! Available options: ${!OS_OPTIONS[*]}"
+        echo -e "${GREEN}✅ All configurations loaded successfully!${NC}"
+        echo -e "${BLUE}   Total options: ${#OS_OPTIONS[@]}${NC}"
+        echo -e "${BLUE}   Total groups: ${#groups_seen[@]}${NC}"
+        echo
     fi
 }
 
@@ -62,40 +101,10 @@ load_yaml_config() {
 # Debug/verbose mode (set DEBUG=1 to enable verbose output)
 DEBUG="${DEBUG:-0}"
 
-# Load OS configurations (required)
-# Priority: YAML > Bash (simplified)
-CUSTOM_CONFIG_YAML="${CUSTOM_CONFIG_YAML:-$REPO_ROOT/config/os-config.yaml}"
-CUSTOM_CONFIG_BASH="${CUSTOM_CONFIG_BASH:-$REPO_ROOT/config/os-config.sh}"
-
-# Check for multiple config files and warn user
-config_files_found=()
-[[ -f "$CUSTOM_CONFIG_YAML" ]] && config_files_found+=("YAML: $CUSTOM_CONFIG_YAML")
-[[ -f "$CUSTOM_CONFIG_BASH" ]] && config_files_found+=("Bash: $CUSTOM_CONFIG_BASH")
-
-if [[ ${#config_files_found[@]} -gt 1 && "$DEBUG" == "1" ]]; then
-    echo -e "${YELLOW}⚠️  Multiple configuration files found:${NC}"
-    for config in "${config_files_found[@]}"; do
-        echo -e "   - $config"
-    done
-    echo -e "${YELLOW}💡 Using priority: YAML > Bash${NC}"
-    echo
-fi
-
-# Load the highest priority config file
-if [[ -f "$CUSTOM_CONFIG_YAML" ]]; then
-    [[ "$DEBUG" == "1" ]] && echo -e "${BLUE}📄 Loading OS configurations from $CUSTOM_CONFIG_YAML${NC}"
-    load_yaml_config "$CUSTOM_CONFIG_YAML"
-elif [[ -f "$CUSTOM_CONFIG_BASH" ]]; then
-    [[ "$DEBUG" == "1" ]] && echo -e "${BLUE}📄 Loading OS configurations from $CUSTOM_CONFIG_BASH${NC}"
-    source "$CUSTOM_CONFIG_BASH"
-else
-    echo -e "${RED}❌ No configuration file found${NC}"
-    echo -e "${YELLOW}💡 Create one of:${NC}"
-    echo -e "   - ${CYAN}$CUSTOM_CONFIG_YAML${NC} (YAML format - recommended)"
-    echo -e "   - ${CYAN}$CUSTOM_CONFIG_BASH${NC} (Bash format - legacy)"
-    echo -e "${YELLOW}💡 See config/README.md for examples${NC}"
-    exit 1
-fi
+# Load OS configurations from all matching YAML files
+# Pattern: config/os-config-*.yaml
+# Files are loaded in alphabetical order and merged
+load_yaml_config
 
 # Function to display header
 show_header() {

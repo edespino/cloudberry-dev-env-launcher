@@ -16,7 +16,7 @@ os_options:
 
   al2023-cbdb-build:
     name: "Amazon Linux 2023 - Cloudberry build"
-    group: "Cloudberry Packer custom AMIs"
+    group: "Cloudberry - Custom Packer AMIs"
     ami_owner: "703671893074"
     ami_filter: "cloudberry-packer-build-al2023-*"
     username: "ec2-user"
@@ -24,7 +24,7 @@ os_options:
 
   rl8-cbdb-build:
     name: "Rocky Linux 8 - Cloudberry build"
-    group: "Cloudberry Packer custom AMIs"
+    group: "Cloudberry - Custom Packer AMIs"
     ami_owner: "703671893074"
     ami_filter: "cloudberry-packer-build-rocky8-*"
     username: "rocky"
@@ -32,7 +32,7 @@ os_options:
 
   rl9-cbdb-build:
     name: "Rocky Linux 9 - Cloudberry build"
-    group: "Cloudberry Packer custom AMIs"
+    group: "Cloudberry - Custom Packer AMIs"
     ami_owner: "703671893074"
     ami_filter: "cloudberry-packer-build-rocky9-*"
     username: "rocky"
@@ -40,7 +40,7 @@ os_options:
 
   rl10-cbdb-build:
     name: "Rocky Linux 10 - Cloudberry build"
-    group: "Cloudberry Packer custom AMIs"
+    group: "Cloudberry - Custom Packer AMIs"
     ami_owner: "703671893074"
     ami_filter: "cloudberry-packer-build-rocky10-*"
     username: "rocky"
@@ -48,7 +48,7 @@ os_options:
 
   ubuntu20-cbdb-build:
     name: "Ubuntu 20.04 - Cloudberry build"
-    group: "Cloudberry Packer custom AMIs"
+    group: "Cloudberry - Custom Packer AMIs"
     ami_owner: "703671893074"
     ami_filter: "cloudberry-packer-build-ubuntu20-*"
     username: "ubuntu"
@@ -56,7 +56,7 @@ os_options:
 
   ubuntu22-cbdb-build:
     name: "Ubuntu 22.04 - Cloudberry build"
-    group: "Cloudberry Packer custom AMIs"
+    group: "Cloudberry - Custom Packer AMIs"
     ami_owner: "703671893074"
     ami_filter: "cloudberry-packer-build-ubuntu22-*"
     username: "ubuntu"
