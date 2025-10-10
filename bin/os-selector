@@ -354,7 +354,7 @@ wait_for_ssh() {
 }
 
 # SSH connection options with timeouts (as array for proper expansion)
-SSH_OPTS=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10)
+SSH_OPTS=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 -o LogLevel=ERROR)
 
 # NOTE: SSH key path is set in .envrc
 ## SSH_KEY_PATH="\${TF_VAR_env_prefix}_generated_key.pem"
@@ -375,7 +375,7 @@ create_user_ssh_aliases() {
              ssh "\${SSH_OPTS[@]}" \\
                  -i \${SSH_KEY_PATH} \\
                  \${TF_VAR_default_username}@\$(get_instance_ip 0) \\
-                 "cat ~/.ssh/authorized_keys | sudo tee -a ~'\$username'/.ssh/authorized_keys" && \\
+                 "cat ~/.ssh/authorized_keys | sudo tee -a ~'\$username'/.ssh/authorized_keys > /dev/null" && \\
              echo "✅ SSH key copied to '\$username' user"'
 
   # SSH connections for 3 instances
