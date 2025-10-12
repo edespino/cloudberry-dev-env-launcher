@@ -80,13 +80,16 @@ Before getting started, ensure you have the required tools and AWS configuration
 
    # Follow prompts to:
    #  1. Select OS (15+ options)
-   #  2. Choose directory name
-   #  3. Select instance type (C7i/C6i/C5)
-   #  4. Configure spot instances
-   #  5. Confirm and create
+   #  2. Choose subdirectory (optional, single-level only)
+   #  3. Choose directory name
+   #  4. Select instance type (C7i/C6i/C5)
+   #  5. Configure spot instances
+   #  6. Confirm and create
 
    # Navigate to created environment
    cd environments/your-selected-env
+   # or with subdirectory:
+   cd environments/apache/your-selected-env
    ```
 
 3. **Configure environment:**
@@ -146,6 +149,7 @@ Interactive tool for creating new environments with your preferred operating sys
 
 **Features:**
 - Choose from 8+ supported operating systems
+- Optional subdirectory organization (single-level)
 - Interactive instance type selection (C7i, C6i, C5 generations)
 - Spot instance vs on-demand configuration
 - Automatic AMI configuration for selected OS

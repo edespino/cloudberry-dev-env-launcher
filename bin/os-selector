@@ -229,6 +229,7 @@ create_environment() {
     local custom_name="$2"
     local instance_type="$3"
     local use_spot="$4"
+    local subdirectory="$5"
     local actual_key="${SELECTION_MAP[$selection]}"
     local os_name="${OS_OPTIONS[$actual_key]}"
     local dir_name="${DIR_NAMES[$actual_key]}"
@@ -238,20 +239,21 @@ create_environment() {
 
     # Use custom name if provided, otherwise use default
     local target_name="${custom_name:-$dir_name}"
-    local target_dir="$ENVIRONMENTS_DIR/$target_name"
-    
-    # Check if directory already exists
+
+    # Build target directory with optional subdirectory
+    local target_dir="$ENVIRONMENTS_DIR"
+    if [[ -n "$subdirectory" ]]; then
+        target_dir="$target_dir/$subdirectory"
+        # Create subdirectory if it doesn't exist
+        mkdir -p "$target_dir"
+    fi
+    target_dir="$target_dir/$target_name"
+
+    # Remove existing directory if it exists (user was already warned earlier)
     if [[ -d "$target_dir" ]]; then
-        echo -e "${RED}❌ Directory already exists: $target_dir${NC}"
-        echo -n -e "${YELLOW}Overwrite? [y/N]: ${NC}"
-        read -r confirm
-        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-            echo -e "${YELLOW}❌ Operation cancelled${NC}"
-            exit 1
-        fi
         rm -rf "$target_dir"
     fi
-    
+
     # Copy template directory
     echo -e "${BLUE}📁 Copying template to $target_name...${NC}"
     cp -r "$TEMPLATE_DIR" "$target_dir"
@@ -259,14 +261,26 @@ create_environment() {
     # Update .envrc with correct path and selected OS configuration
     local envrc_file="$target_dir/.envrc"
     if [[ -f "$envrc_file" ]]; then
-        # Update the directory reference
-        sed -i.bak "s|environments/[^/]*|environments/$target_name|g" "$envrc_file"
+        # Update the directory reference (with optional subdirectory)
+        local envrc_path="environments"
+        if [[ -n "$subdirectory" ]]; then
+            envrc_path="environments/$subdirectory"
+        fi
+        sed -i.bak "s|environments/[^/]*|$envrc_path/$target_name|g" "$envrc_file"
 
         # Replace instance type placeholder
         sed -i.bak2 "s|__INSTANCE_TYPE__|$instance_type|g" "$envrc_file"
 
         # Replace spot instance placeholder
         sed -i.bak3 "s|__USE_SPOT_INSTANCES__|$use_spot|g" "$envrc_file"
+
+        # Update env_prefix to include subdirectory to avoid collisions
+        # Without subdirectory: ${USER}-rl9-cbdb-build
+        # With subdirectory: ${USER}-cloudberry-rl9-cbdb-build
+        if [[ -n "$subdirectory" ]]; then
+            sed -i.bak4 "s|export TF_VAR_env_prefix=\${USER}-\$CURRENT_DIR|export TF_VAR_env_prefix=\${USER}-${subdirectory}-\$CURRENT_DIR|g" "$envrc_file"
+            rm -f "$envrc_file.bak4"
+        fi
 
         # Replace the AMI configuration section with selected OS only
         # Use sed to replace the section between the markers
@@ -285,7 +299,15 @@ export TF_VAR_default_username="'"$username"'"\
         rm -f "$envrc_file.bak2"
         rm -f "$envrc_file.bak3"
     fi
-    
+
+    # Update main.tf module path for subdirectories
+    local main_tf="$target_dir/main.tf"
+    if [[ -f "$main_tf" && -n "$subdirectory" ]]; then
+        # For subdirectories, need one more "../" to reach repo root
+        sed -i.bak 's|source = "../../modules/|source = "../../../modules/|g' "$main_tf"
+        rm -f "$main_tf.bak"
+    fi
+
     # Create updated .env file
     local env_file="$target_dir/.env"
     cat > "$env_file" << EOF
@@ -306,7 +328,17 @@ export TF_VAR_default_username="$username"
 # =============================================================================
 
 # Source shared spot checking functions
-REPO_ROOT="\$(cd ../.. && pwd)"
+# Calculate REPO_ROOT based on directory depth (handle subdirectories)
+EOF
+
+    # Calculate the correct number of "../" based on subdirectory depth
+    local cd_up="../.."
+    if [[ -n "$subdirectory" ]]; then
+        cd_up="../../.."
+    fi
+
+    cat >> "$env_file" << EOF
+REPO_ROOT="\$(cd $cd_up && pwd)"
 if [[ -f "\$REPO_ROOT/lib/spot-functions.sh" ]]; then
     source "\$REPO_ROOT/lib/spot-functions.sh"
 else
@@ -660,30 +692,134 @@ get_os_selection() {
     done
 }
 
+# Function to get subdirectory (optional)
+get_subdirectory() {
+    while true; do
+        echo
+        echo -e "${YELLOW}Subdirectory options:${NC}"
+        echo -e "  ${CYAN}Organize environments into subdirectories (e.g., apache, experimental)${NC}"
+        echo
+
+        # Build array of existing subdirectories (exclude environment directories and template)
+        # Environment directories contain main.tf or .envrc files
+        local -a existing_subdirs_array=()
+        for dir in "$ENVIRONMENTS_DIR"/*; do
+            if [[ -d "$dir" && ! "$dir" == *"/multi-os-sample" ]]; then
+                local basename=$(basename "$dir")
+                # Skip hidden directories and check if it's NOT an environment
+                if [[ ! "$basename" =~ ^\. ]] && \
+                   [[ ! -f "$dir/main.tf" ]] && \
+                   [[ ! -f "$dir/.envrc" ]]; then
+                    # This is a subdirectory container, not an environment
+                    existing_subdirs_array+=("$basename")
+                fi
+            fi
+        done
+
+        # Sort the array
+        IFS=$'\n' existing_subdirs_array=($(sort <<<"${existing_subdirs_array[*]}"))
+        unset IFS
+
+        # Build selection menu
+        local option_num=1
+        declare -A subdir_map
+
+        # Option 1: No subdirectory (always first)
+        echo -e "  ${GREEN}[${option_num}]${NC} No subdirectory ${PURPLE}(default - create in environments/)${NC}"
+        subdir_map["$option_num"]=""
+        ((option_num++))
+
+        # Options for existing subdirectories
+        if [[ ${#existing_subdirs_array[@]} -gt 0 ]]; then
+            echo
+            echo -e "  ${PURPLE}Existing subdirectories:${NC}"
+            for subdir in "${existing_subdirs_array[@]}"; do
+                echo -e "  ${GREEN}[${option_num}]${NC} $subdir"
+                subdir_map["$option_num"]="$subdir"
+                ((option_num++))
+            done
+        fi
+
+        echo
+        # Option for creating new subdirectory
+        local new_subdir_option=$option_num
+        echo -e "  ${GREEN}[${option_num}]${NC} Create new subdirectory"
+        echo -e "  ${GREEN}[b]${NC} Back to OS selection"
+        echo
+
+        local max_option=$((option_num))
+        echo -n -e "${YELLOW}Choose option [1-${max_option}/b] (default: 1): ${NC}"
+        read -r subdir_choice
+
+        # Default to option 1 if empty
+        if [[ -z "$subdir_choice" ]]; then
+            subdir_choice="1"
+        fi
+
+        # Check for back option
+        if [[ "$subdir_choice" == "b" || "$subdir_choice" == "B" ]]; then
+            return 1  # Signal to go back
+        fi
+
+        # Check if it's the "create new" option
+        if [[ "$subdir_choice" == "$new_subdir_option" ]]; then
+            echo -n -e "${YELLOW}Enter new subdirectory name: ${NC}"
+            read -r subdirectory
+            if [[ -z "$subdirectory" ]]; then
+                echo -e "${RED}❌ Empty subdirectory not allowed${NC}"
+                echo
+                continue
+            fi
+            # Validate subdirectory name (basic check)
+            if [[ ! "$subdirectory" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+                echo -e "${RED}❌ Invalid subdirectory name. Use only letters, numbers, hyphens, and underscores.${NC}"
+                echo
+                continue
+            fi
+            SELECTED_SUBDIRECTORY="$subdirectory"
+            return 0
+        fi
+
+        # Check if it's a valid numeric option (check if key exists in map)
+        if [[ "$subdir_choice" =~ ^[0-9]+$ ]] && [[ -v "subdir_map[$subdir_choice]" ]]; then
+            SELECTED_SUBDIRECTORY="${subdir_map[$subdir_choice]}"
+            return 0
+        else
+            echo -e "${RED}❌ Invalid option. Please choose 1-${max_option} or b.${NC}"
+            echo
+        fi
+    done
+}
+
 # Function to get directory name choice
 get_directory_name() {
     local selection=$1
+    local subdirectory="$2"
     local actual_key="${SELECTION_MAP[$selection]}"
     local custom_name=""
-    
+
     while true; do
+        echo
         echo -e "${YELLOW}Directory name options:${NC}"
-        echo -e "  ${GREEN}[1]${NC} Use default name: ${CYAN}${DIR_NAMES[$actual_key]}${NC} ${PURPLE}(default)${NC}"
+        local full_path="environments/"
+        if [[ -n "$subdirectory" ]]; then
+            full_path+="${subdirectory}/"
+        fi
+        echo -e "  ${GREEN}[1]${NC} Use default name: ${CYAN}${full_path}${DIR_NAMES[$actual_key]}${NC} ${PURPLE}(default)${NC}"
         echo -e "  ${GREEN}[2]${NC} Enter custom name"
-        echo -e "  ${GREEN}[b]${NC} Back to OS selection"
+        echo -e "  ${GREEN}[b]${NC} Back to subdirectory selection"
         echo
         echo -n -e "${YELLOW}Choose option [1/2/b] (default: 1): ${NC}"
         read -r name_choice
-        
+
         # Default to option 1 if empty
         if [[ -z "$name_choice" ]]; then
             name_choice="1"
         fi
-        
+
         case "$name_choice" in
             "1")
                 custom_name=""
-                break
                 ;;
             "2")
                 echo -n -e "${YELLOW}Enter custom directory name: ${NC}"
@@ -699,7 +835,6 @@ get_directory_name() {
                     echo
                     continue
                 fi
-                break
                 ;;
             "b"|"B")
                 return 1  # Signal to go back
@@ -707,10 +842,120 @@ get_directory_name() {
             *)
                 echo -e "${RED}❌ Invalid option. Please choose 1, 2, or b.${NC}"
                 echo
+                continue
                 ;;
         esac
+
+        # Show confirmation of what will be created
+        local target_name="${custom_name:-${DIR_NAMES[$actual_key]}}"
+        local display_path="environments/"
+        if [[ -n "$subdirectory" ]]; then
+            display_path+="${subdirectory}/"
+        fi
+        display_path+="$target_name"
+
+        echo
+        echo -e "${GREEN}✓${NC} Will create: ${CYAN}$display_path${NC}"
+
+        # Check if directory already exists
+        local target_name="${custom_name:-${DIR_NAMES[$actual_key]}}"
+        local target_dir="$ENVIRONMENTS_DIR"
+        if [[ -n "$subdirectory" ]]; then
+            target_dir="$target_dir/$subdirectory"
+        fi
+        target_dir="$target_dir/$target_name"
+
+        if [[ -d "$target_dir" ]]; then
+            echo
+            echo -e "${YELLOW}⚠️  Directory already exists: ${target_dir}${NC}"
+
+            # Check for active Terraform state
+            local tfstate_file="$target_dir/terraform.tfstate"
+            local has_active_resources=false
+
+            if [[ -f "$tfstate_file" ]]; then
+                # Check if state file has resources
+                if command -v jq &> /dev/null; then
+                    local resource_count=$(jq -r '.resources | length' "$tfstate_file" 2>/dev/null || echo "0")
+                    if [[ "$resource_count" -gt 0 ]]; then
+                        has_active_resources=true
+                    fi
+                else
+                    # Fallback: simple check for "resources" in file
+                    if grep -q '"resources"' "$tfstate_file" 2>/dev/null; then
+                        has_active_resources=true
+                    fi
+                fi
+            fi
+
+            if [[ "$has_active_resources" == "true" ]]; then
+                echo -e "${RED}🚨 BLOCKED: Active Terraform state detected!${NC}"
+                echo -e "${RED}This directory contains managed infrastructure resources.${NC}"
+                echo
+                echo -e "${YELLOW}You MUST do one of the following:${NC}"
+                echo -e "${YELLOW}  1. Run 'terraform destroy' in this directory first${NC}"
+                echo -e "${YELLOW}  2. Choose a different directory name${NC}"
+                echo
+                echo -e "${CYAN}To destroy resources:${NC}"
+                echo -e "  ${CYAN}cd $target_dir${NC}"
+                echo -e "  ${CYAN}terraform destroy${NC}"
+                echo
+                echo -e "  ${GREEN}[1]${NC} Choose a different name"
+                echo -e "  ${GREEN}[b]${NC} Back to subdirectory selection"
+                echo
+                echo -n -e "${YELLOW}Choose option [1/b]: ${NC}"
+                read -r overwrite_choice
+
+                case "$overwrite_choice" in
+                    "1")
+                        # Loop back to directory name selection
+                        continue
+                        ;;
+                    "b"|"B")
+                        return 1  # Signal to go back
+                        ;;
+                    *)
+                        echo -e "${RED}❌ Invalid option. Please choose 1 or b.${NC}"
+                        echo
+                        continue
+                        ;;
+                esac
+            else
+                # No active resources - allow overwrite
+                echo -e "${YELLOW}This directory will be overwritten if you continue.${NC}"
+                echo
+                echo -e "  ${GREEN}[1]${NC} Choose a different name ${PURPLE}(recommended)${NC}"
+                echo -e "  ${GREEN}[2]${NC} Continue (will overwrite)"
+                echo -e "  ${GREEN}[b]${NC} Back to subdirectory selection"
+                echo
+                echo -n -e "${YELLOW}Choose option [1/2/b]: ${NC}"
+                read -r overwrite_choice
+
+                case "$overwrite_choice" in
+                    "1")
+                        # Loop back to directory name selection
+                        continue
+                        ;;
+                    "2")
+                        # Continue with this name (will overwrite)
+                        break
+                        ;;
+                    "b"|"B")
+                        return 1  # Signal to go back
+                        ;;
+                    *)
+                        echo -e "${RED}❌ Invalid option. Please choose 1, 2, or b.${NC}"
+                        echo
+                        continue
+                        ;;
+                esac
+            fi
+        else
+            # Directory doesn't exist, proceed
+            break
+        fi
     done
-    
+
     # Return the custom name via a global variable
     SELECTED_CUSTOM_NAME="$custom_name"
     return 0
@@ -804,15 +1049,31 @@ confirm_creation() {
     local custom_name="$2"
     local instance_type="$3"
     local use_spot="$4"
+    local subdirectory="$5"
     local actual_key="${SELECTION_MAP[$selection]}"
     local os_name="${OS_OPTIONS[$actual_key]}"
     local dir_name="${custom_name:-${DIR_NAMES[$actual_key]}}"
+
+    # Build full path for display
+    local full_path="environments/"
+    if [[ -n "$subdirectory" ]]; then
+        full_path+="${subdirectory}/"
+    fi
+    full_path+="$dir_name"
+
+    # Build AWS environment prefix (what resources will be named)
+    local env_prefix="${USER}"
+    if [[ -n "$subdirectory" ]]; then
+        env_prefix+="-${subdirectory}"
+    fi
+    env_prefix+="-${dir_name}"
 
     while true; do
         echo
         echo -e "${CYAN}📋 Summary:${NC}"
         echo -e "  ${PURPLE}OS:${NC} $os_name"
-        echo -e "  ${PURPLE}Directory:${NC} $dir_name"
+        echo -e "  ${PURPLE}Path:${NC} $full_path"
+        echo -e "  ${PURPLE}AWS Prefix:${NC} $env_prefix"
         echo -e "  ${PURPLE}AMI Owner:${NC} ${AMI_OWNERS[$actual_key]}"
         echo -e "  ${PURPLE}AMI Filter:${NC} ${AMI_FILTERS[$actual_key]}"
         echo -e "  ${PURPLE}Username:${NC} ${DEFAULT_USERNAMES[$actual_key]}"
@@ -870,39 +1131,49 @@ main() {
             # Show configuration for selected OS
             show_configuration "$selection"
 
-            # Step 2: Get directory name
-            if get_directory_name "$selection"; then
-                local custom_name="$SELECTED_CUSTOM_NAME"
+            # Step 2: Get subdirectory (optional)
+            if get_subdirectory; then
+                local subdirectory="$SELECTED_SUBDIRECTORY"
 
                 while true; do
-                    # Step 3: Get instance type
-                    get_instance_type
-                    local instance_type="$SELECTED_INSTANCE_TYPE"
+                    # Step 3: Get directory name
+                    if get_directory_name "$selection" "$subdirectory"; then
+                        local custom_name="$SELECTED_CUSTOM_NAME"
 
-                    # Step 4: Get spot instance preference
-                    get_spot_instances
-                    local use_spot="$SELECTED_USE_SPOT"
+                        while true; do
+                            # Step 4: Get instance type
+                            get_instance_type
+                            local instance_type="$SELECTED_INSTANCE_TYPE"
 
-                    # Step 5: Confirm and create
-                    local confirm_result
-                    confirm_creation "$selection" "$custom_name" "$instance_type" "$use_spot"
-                    confirm_result=$?
+                            # Step 5: Get spot instance preference
+                            get_spot_instances
+                            local use_spot="$SELECTED_USE_SPOT"
 
-                    case $confirm_result in
-                        0)
-                            # Create environment and exit
-                            create_environment "$selection" "$custom_name" "$instance_type" "$use_spot"
-                            exit 0
-                            ;;
-                        1)
-                            # Go back to instance configuration - continue inner loop
-                            continue
-                            ;;
-                        2)
-                            # Go back to OS selection - break all inner loops
-                            break 2
-                            ;;
-                    esac
+                            # Step 6: Confirm and create
+                            local confirm_result
+                            confirm_creation "$selection" "$custom_name" "$instance_type" "$use_spot" "$subdirectory"
+                            confirm_result=$?
+
+                            case $confirm_result in
+                                0)
+                                    # Create environment and exit
+                                    create_environment "$selection" "$custom_name" "$instance_type" "$use_spot" "$subdirectory"
+                                    exit 0
+                                    ;;
+                                1)
+                                    # Go back to instance configuration - continue inner loop
+                                    continue
+                                    ;;
+                                2)
+                                    # Go back to OS selection - break all inner loops
+                                    break 3
+                                    ;;
+                            esac
+                        done
+                    else
+                        # User chose to go back to subdirectory selection
+                        break
+                    fi
                 done
             else
                 # User chose to go back to OS selection

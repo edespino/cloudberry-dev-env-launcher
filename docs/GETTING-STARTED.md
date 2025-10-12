@@ -30,10 +30,21 @@ Use the interactive OS selector to create a new environment:
 
 The selector will guide you through:
 1. **OS Selection**: Choose from 15+ operating systems
-2. **Directory Name**: Use default or specify custom name
-3. **Instance Type**: Select from C7i, C6i, or C5 generations (vertical menu)
-4. **Spot Instances**: Choose between on-demand or spot instances
-5. **Confirmation**: Review and confirm your selections
+2. **Subdirectory**: Optional single-level subdirectory (e.g., `apache`, `experimental`)
+3. **Directory Name**: Use default or specify custom name
+4. **Instance Type**: Select from C7i, C6i, or C5 generations (vertical menu)
+5. **Spot Instances**: Choose between on-demand or spot instances
+6. **Confirmation**: Review and confirm your selections
+
+**Subdirectory Organization:**
+- **No subdirectory** (default): Creates `environments/rl9-apache-polaris/`
+- **With subdirectory**: Creates `environments/apache/rl9-polaris-test/`
+- Shows existing subdirectories for easy reuse
+- Only single-level subdirectories supported (no nested paths like `apache/experimental`)
+- Automatically adjusts:
+  - Terraform module paths (`main.tf`)
+  - REPO_ROOT calculations (`.env`)
+  - Environment path references (`.envrc`)
 
 ### OR Copy Sample Environment (Manual)
 
