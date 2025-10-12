@@ -308,6 +308,13 @@ export TF_VAR_default_username="'"$username"'"\
         rm -f "$main_tf.bak"
     fi
 
+    # Update .envrc REPO_ROOT calculation for subdirectories
+    if [[ -f "$envrc_file" && -n "$subdirectory" ]]; then
+        # For subdirectories, need one more "../" to reach repo root
+        sed -i.bak5 's|REPO_ROOT="\$(cd \.\./\.\. &&|REPO_ROOT="\$(cd ../../.. \&\&|g' "$envrc_file"
+        rm -f "$envrc_file.bak5"
+    fi
+
     # Create updated .env file
     local env_file="$target_dir/.env"
     cat > "$env_file" << EOF
