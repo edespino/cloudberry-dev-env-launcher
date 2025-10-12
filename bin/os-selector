@@ -30,6 +30,23 @@ PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
+# Instance type options (standard AWS instance types)
+declare -A INSTANCE_TYPES=(
+    ["1"]="c7i.xlarge"
+    ["2"]="c7i.2xlarge"
+    ["3"]="c7i.4xlarge"
+    ["4"]="c7i.8xlarge"
+    ["5"]="c6i.xlarge"
+    ["6"]="c6i.2xlarge"
+    ["7"]="c6i.4xlarge"
+    ["8"]="c6i.8xlarge"
+    ["9"]="c5.xlarge"
+    ["10"]="c5.2xlarge"
+    ["11"]="c5.4xlarge"
+    ["12"]="c5.9xlarge"
+)
+DEFAULT_INSTANCE_TYPE="c7i.4xlarge"
+
 # Function to load all YAML configurations matching pattern
 load_yaml_config() {
     local config_pattern="$REPO_ROOT/config/os-config-*.yaml"
@@ -210,13 +227,15 @@ show_configuration() {
 create_environment() {
     local selection=$1
     local custom_name="$2"
+    local instance_type="$3"
+    local use_spot="$4"
     local actual_key="${SELECTION_MAP[$selection]}"
     local os_name="${OS_OPTIONS[$actual_key]}"
     local dir_name="${DIR_NAMES[$actual_key]}"
     local ami_owner="${AMI_OWNERS[$actual_key]}"
     local ami_filter="${AMI_FILTERS[$actual_key]}"
     local username="${DEFAULT_USERNAMES[$actual_key]}"
-    
+
     # Use custom name if provided, otherwise use default
     local target_name="${custom_name:-$dir_name}"
     local target_dir="$ENVIRONMENTS_DIR/$target_name"
@@ -242,7 +261,13 @@ create_environment() {
     if [[ -f "$envrc_file" ]]; then
         # Update the directory reference
         sed -i.bak "s|environments/[^/]*|environments/$target_name|g" "$envrc_file"
-        
+
+        # Replace instance type placeholder
+        sed -i.bak2 "s|__INSTANCE_TYPE__|$instance_type|g" "$envrc_file"
+
+        # Replace spot instance placeholder
+        sed -i.bak3 "s|__USE_SPOT_INSTANCES__|$use_spot|g" "$envrc_file"
+
         # Replace the AMI configuration section with selected OS only
         # Use sed to replace the section between the markers
         sed -i.tmp '/^## Rocky Linux 9/,/^## ======================================================================/{
@@ -254,9 +279,11 @@ export TF_VAR_default_username="'"$username"'"\
 
             /^## ======================================================================/!d
         }' "$envrc_file"
-        
+
         rm -f "$envrc_file.tmp"
         rm -f "$envrc_file.bak"
+        rm -f "$envrc_file.bak2"
+        rm -f "$envrc_file.bak3"
     fi
     
     # Create updated .env file
@@ -689,14 +716,98 @@ get_directory_name() {
     return 0
 }
 
+# Function to get instance type selection
+get_instance_type() {
+    while true; do
+        echo
+        echo -e "${YELLOW}Select Instance Type:${NC}"
+        echo
+        echo -e "${CYAN}Compute-Optimized Instances:${NC}"
+        echo
+        echo -e "  ${GREEN}C7i Generation (Latest):${NC}"
+        echo -e "    ${GREEN}[1]${NC}  c7i.xlarge    (4 vCPU, 8 GB)"
+        echo -e "    ${GREEN}[2]${NC}  c7i.2xlarge   (8 vCPU, 16 GB)"
+        echo -e "    ${GREEN}[3]${NC}  c7i.4xlarge   (16 vCPU, 32 GB) ${PURPLE}[default]${NC}"
+        echo -e "    ${GREEN}[4]${NC}  c7i.8xlarge   (32 vCPU, 64 GB)"
+        echo
+        echo -e "  ${GREEN}C6i Generation:${NC}"
+        echo -e "    ${GREEN}[5]${NC}  c6i.xlarge    (4 vCPU, 8 GB)"
+        echo -e "    ${GREEN}[6]${NC}  c6i.2xlarge   (8 vCPU, 16 GB)"
+        echo -e "    ${GREEN}[7]${NC}  c6i.4xlarge   (16 vCPU, 32 GB)"
+        echo -e "    ${GREEN}[8]${NC}  c6i.8xlarge   (32 vCPU, 64 GB)"
+        echo
+        echo -e "  ${GREEN}C5 Generation:${NC}"
+        echo -e "    ${GREEN}[9]${NC}  c5.xlarge     (4 vCPU, 8 GB)"
+        echo -e "    ${GREEN}[10]${NC} c5.2xlarge   (8 vCPU, 16 GB)"
+        echo -e "    ${GREEN}[11]${NC} c5.4xlarge    (16 vCPU, 32 GB)"
+        echo -e "    ${GREEN}[12]${NC} c5.9xlarge   (36 vCPU, 72 GB)"
+        echo
+        echo -n -e "${YELLOW}Select instance type [1-12] or press Enter for default (${DEFAULT_INSTANCE_TYPE}): ${NC}"
+        read -r choice
+
+        # Default to c7i.4xlarge if empty
+        if [[ -z "$choice" ]]; then
+            SELECTED_INSTANCE_TYPE="$DEFAULT_INSTANCE_TYPE"
+            return 0
+        fi
+
+        # Validate choice
+        if [[ -n "${INSTANCE_TYPES[$choice]}" ]]; then
+            SELECTED_INSTANCE_TYPE="${INSTANCE_TYPES[$choice]}"
+            return 0
+        else
+            echo -e "${RED}❌ Invalid selection. Please choose 1-12.${NC}"
+            echo
+        fi
+    done
+}
+
+# Function to get spot instance preference
+get_spot_instances() {
+    while true; do
+        echo
+        echo -e "${YELLOW}Enable Spot Instances?${NC}"
+        echo
+        echo -e "  ${CYAN}Spot instances can save up to 90% on EC2 costs but may be interrupted.${NC}"
+        echo
+        echo -e "  ${GREEN}[1]${NC} No - Use On-Demand instances ${PURPLE}(default, more reliable)${NC}"
+        echo -e "  ${GREEN}[2]${NC} Yes - Use Spot instances ${PURPLE}(cheaper, may be interrupted)${NC}"
+        echo
+        echo -n -e "${YELLOW}Select option [1/2] or press Enter for default (On-Demand): ${NC}"
+        read -r choice
+
+        # Default to false (on-demand) if empty
+        if [[ -z "$choice" ]]; then
+            choice="1"
+        fi
+
+        case "$choice" in
+            "1")
+                SELECTED_USE_SPOT="false"
+                return 0
+                ;;
+            "2")
+                SELECTED_USE_SPOT="true"
+                return 0
+                ;;
+            *)
+                echo -e "${RED}❌ Invalid selection. Please choose 1 or 2.${NC}"
+                echo
+                ;;
+        esac
+    done
+}
+
 # Function to confirm environment creation
 confirm_creation() {
     local selection=$1
     local custom_name="$2"
+    local instance_type="$3"
+    local use_spot="$4"
     local actual_key="${SELECTION_MAP[$selection]}"
     local os_name="${OS_OPTIONS[$actual_key]}"
     local dir_name="${custom_name:-${DIR_NAMES[$actual_key]}}"
-    
+
     while true; do
         echo
         echo -e "${CYAN}📋 Summary:${NC}"
@@ -705,27 +816,29 @@ confirm_creation() {
         echo -e "  ${PURPLE}AMI Owner:${NC} ${AMI_OWNERS[$actual_key]}"
         echo -e "  ${PURPLE}AMI Filter:${NC} ${AMI_FILTERS[$actual_key]}"
         echo -e "  ${PURPLE}Username:${NC} ${DEFAULT_USERNAMES[$actual_key]}"
+        echo -e "  ${PURPLE}Instance Type:${NC} $instance_type"
+        echo -e "  ${PURPLE}Spot Instances:${NC} $([ "$use_spot" = "true" ] && echo "✓ Enabled" || echo "✗ Disabled")"
         echo
         echo -e "${YELLOW}Actions:${NC}"
         echo -e "  ${GREEN}[c]${NC} Create environment ${PURPLE}(default)${NC}"
-        echo -e "  ${GREEN}[b]${NC} Back to directory name"
+        echo -e "  ${GREEN}[b]${NC} Back to instance configuration"
         echo -e "  ${GREEN}[o]${NC} Back to OS selection"
         echo -e "  ${GREEN}[q]${NC} Quit"
         echo
         echo -n -e "${YELLOW}Choose action [c/b/o/q] (default: c): ${NC}"
         read -r action
-        
+
         # Default to create if empty
         if [[ -z "$action" ]]; then
             action="c"
         fi
-        
+
         case "$action" in
             "c"|"C")
                 return 0  # Proceed with creation
                 ;;
             "b"|"B")
-                return 1  # Go back to directory name
+                return 1  # Go back to instance configuration
                 ;;
             "o"|"O")
                 return 2  # Go back to OS selection
@@ -747,40 +860,50 @@ main() {
     clear
     check_template
     show_header
-    
+
     while true; do
         # Step 1: Get OS selection
         get_os_selection
         local selection=$selection
-        
+
         while true; do
             # Show configuration for selected OS
             show_configuration "$selection"
-            
+
             # Step 2: Get directory name
             if get_directory_name "$selection"; then
                 local custom_name="$SELECTED_CUSTOM_NAME"
-                
-                # Step 3: Confirm and create
-                local confirm_result
-                confirm_creation "$selection" "$custom_name"
-                confirm_result=$?
-                
-                case $confirm_result in
-                    0)
-                        # Create environment and exit
-                        create_environment "$selection" "$custom_name"
-                        exit 0
-                        ;;
-                    1)
-                        # Go back to directory name - continue inner loop
-                        continue
-                        ;;
-                    2)
-                        # Go back to OS selection - break inner loop
-                        break
-                        ;;
-                esac
+
+                while true; do
+                    # Step 3: Get instance type
+                    get_instance_type
+                    local instance_type="$SELECTED_INSTANCE_TYPE"
+
+                    # Step 4: Get spot instance preference
+                    get_spot_instances
+                    local use_spot="$SELECTED_USE_SPOT"
+
+                    # Step 5: Confirm and create
+                    local confirm_result
+                    confirm_creation "$selection" "$custom_name" "$instance_type" "$use_spot"
+                    confirm_result=$?
+
+                    case $confirm_result in
+                        0)
+                            # Create environment and exit
+                            create_environment "$selection" "$custom_name" "$instance_type" "$use_spot"
+                            exit 0
+                            ;;
+                        1)
+                            # Go back to instance configuration - continue inner loop
+                            continue
+                            ;;
+                        2)
+                            # Go back to OS selection - break all inner loops
+                            break 2
+                            ;;
+                    esac
+                done
             else
                 # User chose to go back to OS selection
                 break

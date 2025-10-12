@@ -77,8 +77,14 @@ Before getting started, ensure you have the required tools and AWS configuration
    ```bash
    # Interactive OS selection and environment creation
    ./bin/os-selector
-   
-   # Follow prompts to select OS and directory name
+
+   # Follow prompts to:
+   #  1. Select OS (15+ options)
+   #  2. Choose directory name
+   #  3. Select instance type (C7i/C6i/C5)
+   #  4. Configure spot instances
+   #  5. Confirm and create
+
    # Navigate to created environment
    cd environments/your-selected-env
    ```
@@ -140,6 +146,8 @@ Interactive tool for creating new environments with your preferred operating sys
 
 **Features:**
 - Choose from 8+ supported operating systems
+- Interactive instance type selection (C7i, C6i, C5 generations)
+- Spot instance vs on-demand configuration
 - Automatic AMI configuration for selected OS
 - Default directory naming with custom name option
 - Navigation between choices (back/forward)

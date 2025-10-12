@@ -19,9 +19,25 @@ git clone https://github.com/edespino/cloudberry-dev-env-launcher.git
 cd cloudberry-dev-env-launcher
 ```
 
-### Copy Sample Environment
+### Create Environment with OS Selector (Recommended)
 
-Create your own environment based on the sample:
+Use the interactive OS selector to create a new environment:
+
+```bash
+# Launch interactive environment creation
+./bin/os-selector
+```
+
+The selector will guide you through:
+1. **OS Selection**: Choose from 15+ operating systems
+2. **Directory Name**: Use default or specify custom name
+3. **Instance Type**: Select from C7i, C6i, or C5 generations (vertical menu)
+4. **Spot Instances**: Choose between on-demand or spot instances
+5. **Confirmation**: Review and confirm your selections
+
+### OR Copy Sample Environment (Manual)
+
+Alternatively, create your own environment based on the sample:
 
 ```bash
 # Copy the sample environment
@@ -33,7 +49,9 @@ cd environments/my-dev-env
 
 ### Customize .envrc
 
-Edit the `.envrc` file for your needs:
+**If you used os-selector**: Your `.envrc` is already pre-configured with your selections (OS, instance type, spot instances). You may skip to Step 3.
+
+**If you copied manually**: Edit the `.envrc` file for your needs:
 
 ```bash
 # Edit environment configuration
