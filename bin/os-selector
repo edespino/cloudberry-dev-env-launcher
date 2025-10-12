@@ -745,15 +745,22 @@ get_subdirectory() {
         local new_subdir_option=$option_num
         echo -e "  ${GREEN}[${option_num}]${NC} Create new subdirectory"
         echo -e "  ${GREEN}[b]${NC} Back to OS selection"
+        echo -e "  ${GREEN}[q]${NC} Quit"
         echo
 
         local max_option=$((option_num))
-        echo -n -e "${YELLOW}Choose option [1-${max_option}/b] (default: 1): ${NC}"
+        echo -n -e "${YELLOW}Choose option [1-${max_option}/b/q] (default: 1): ${NC}"
         read -r subdir_choice
 
         # Default to option 1 if empty
         if [[ -z "$subdir_choice" ]]; then
             subdir_choice="1"
+        fi
+
+        # Check for quit option
+        if [[ "$subdir_choice" == "q" || "$subdir_choice" == "Q" ]]; then
+            echo -e "${YELLOW}👋 Goodbye!${NC}"
+            exit 0
         fi
 
         # Check for back option
@@ -808,8 +815,9 @@ get_directory_name() {
         echo -e "  ${GREEN}[1]${NC} Use default name: ${CYAN}${full_path}${DIR_NAMES[$actual_key]}${NC} ${PURPLE}(default)${NC}"
         echo -e "  ${GREEN}[2]${NC} Enter custom name"
         echo -e "  ${GREEN}[b]${NC} Back to subdirectory selection"
+        echo -e "  ${GREEN}[q]${NC} Quit"
         echo
-        echo -n -e "${YELLOW}Choose option [1/2/b] (default: 1): ${NC}"
+        echo -n -e "${YELLOW}Choose option [1/2/b/q] (default: 1): ${NC}"
         read -r name_choice
 
         # Default to option 1 if empty
@@ -818,6 +826,10 @@ get_directory_name() {
         fi
 
         case "$name_choice" in
+            "q"|"Q")
+                echo -e "${YELLOW}👋 Goodbye!${NC}"
+                exit 0
+                ;;
             "1")
                 custom_name=""
                 ;;
@@ -902,11 +914,16 @@ get_directory_name() {
                 echo
                 echo -e "  ${GREEN}[1]${NC} Choose a different name"
                 echo -e "  ${GREEN}[b]${NC} Back to subdirectory selection"
+                echo -e "  ${GREEN}[q]${NC} Quit"
                 echo
-                echo -n -e "${YELLOW}Choose option [1/b]: ${NC}"
+                echo -n -e "${YELLOW}Choose option [1/b/q]: ${NC}"
                 read -r overwrite_choice
 
                 case "$overwrite_choice" in
+                    "q"|"Q")
+                        echo -e "${YELLOW}👋 Goodbye!${NC}"
+                        exit 0
+                        ;;
                     "1")
                         # Loop back to directory name selection
                         continue
@@ -915,7 +932,7 @@ get_directory_name() {
                         return 1  # Signal to go back
                         ;;
                     *)
-                        echo -e "${RED}❌ Invalid option. Please choose 1 or b.${NC}"
+                        echo -e "${RED}❌ Invalid option. Please choose 1, b, or q.${NC}"
                         echo
                         continue
                         ;;
@@ -927,11 +944,16 @@ get_directory_name() {
                 echo -e "  ${GREEN}[1]${NC} Choose a different name ${PURPLE}(recommended)${NC}"
                 echo -e "  ${GREEN}[2]${NC} Continue (will overwrite)"
                 echo -e "  ${GREEN}[b]${NC} Back to subdirectory selection"
+                echo -e "  ${GREEN}[q]${NC} Quit"
                 echo
-                echo -n -e "${YELLOW}Choose option [1/2/b]: ${NC}"
+                echo -n -e "${YELLOW}Choose option [1/2/b/q]: ${NC}"
                 read -r overwrite_choice
 
                 case "$overwrite_choice" in
+                    "q"|"Q")
+                        echo -e "${YELLOW}👋 Goodbye!${NC}"
+                        exit 0
+                        ;;
                     "1")
                         # Loop back to directory name selection
                         continue
@@ -944,7 +966,7 @@ get_directory_name() {
                         return 1  # Signal to go back
                         ;;
                     *)
-                        echo -e "${RED}❌ Invalid option. Please choose 1, 2, or b.${NC}"
+                        echo -e "${RED}❌ Invalid option. Please choose 1, 2, b, or q.${NC}"
                         echo
                         continue
                         ;;
@@ -987,7 +1009,9 @@ get_instance_type() {
         echo -e "    ${GREEN}[11]${NC} c5.4xlarge    (16 vCPU, 32 GB)"
         echo -e "    ${GREEN}[12]${NC} c5.9xlarge   (36 vCPU, 72 GB)"
         echo
-        echo -n -e "${YELLOW}Select instance type [1-12] or press Enter for default (${DEFAULT_INSTANCE_TYPE}): ${NC}"
+        echo -e "  ${GREEN}[q]${NC} Quit"
+        echo
+        echo -n -e "${YELLOW}Select instance type [1-12/q] or press Enter for default (${DEFAULT_INSTANCE_TYPE}): ${NC}"
         read -r choice
 
         # Default to c7i.4xlarge if empty
@@ -996,12 +1020,18 @@ get_instance_type() {
             return 0
         fi
 
+        # Check for quit option
+        if [[ "$choice" == "q" || "$choice" == "Q" ]]; then
+            echo -e "${YELLOW}👋 Goodbye!${NC}"
+            exit 0
+        fi
+
         # Validate choice
         if [[ -n "${INSTANCE_TYPES[$choice]}" ]]; then
             SELECTED_INSTANCE_TYPE="${INSTANCE_TYPES[$choice]}"
             return 0
         else
-            echo -e "${RED}❌ Invalid selection. Please choose 1-12.${NC}"
+            echo -e "${RED}❌ Invalid selection. Please choose 1-12 or q.${NC}"
             echo
         fi
     done
@@ -1017,8 +1047,9 @@ get_spot_instances() {
         echo
         echo -e "  ${GREEN}[1]${NC} No - Use On-Demand instances ${PURPLE}(default, more reliable)${NC}"
         echo -e "  ${GREEN}[2]${NC} Yes - Use Spot instances ${PURPLE}(cheaper, may be interrupted)${NC}"
+        echo -e "  ${GREEN}[q]${NC} Quit"
         echo
-        echo -n -e "${YELLOW}Select option [1/2] or press Enter for default (On-Demand): ${NC}"
+        echo -n -e "${YELLOW}Select option [1/2/q] or press Enter for default (On-Demand): ${NC}"
         read -r choice
 
         # Default to false (on-demand) if empty
@@ -1027,6 +1058,10 @@ get_spot_instances() {
         fi
 
         case "$choice" in
+            "q"|"Q")
+                echo -e "${YELLOW}👋 Goodbye!${NC}"
+                exit 0
+                ;;
             "1")
                 SELECTED_USE_SPOT="false"
                 return 0
@@ -1036,7 +1071,7 @@ get_spot_instances() {
                 return 0
                 ;;
             *)
-                echo -e "${RED}❌ Invalid selection. Please choose 1 or 2.${NC}"
+                echo -e "${RED}❌ Invalid selection. Please choose 1, 2, or q.${NC}"
                 echo
                 ;;
         esac
@@ -1151,8 +1186,10 @@ main() {
 
                             # Step 6: Confirm and create
                             local confirm_result
+                            set +e  # Temporarily disable exit on error to capture return code
                             confirm_creation "$selection" "$custom_name" "$instance_type" "$use_spot" "$subdirectory"
                             confirm_result=$?
+                            set -e  # Re-enable exit on error
 
                             case $confirm_result in
                                 0)
