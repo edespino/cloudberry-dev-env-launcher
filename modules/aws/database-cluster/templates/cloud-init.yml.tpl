@@ -156,7 +156,7 @@ write_files:
           echo "Mounting $device at $mount_point" >> $LOG_FILE
           mount "$device" "$mount_point"
           chown ${default_username}:${default_username} "$mount_point"
-          chmod 700 "$mount_point"
+          chmod 777 "$mount_point"
         else
           echo "Device $device not found, skipping" >> $LOG_FILE
         fi

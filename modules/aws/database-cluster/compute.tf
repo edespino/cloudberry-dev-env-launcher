@@ -56,3 +56,33 @@ resource "aws_instance" "database_instances" {
 
   depends_on = [aws_placement_group.cluster]
 }
+
+# EBS Data Volumes
+resource "aws_ebs_volume" "data_volume" {
+  count             = var.vm_count * var.data_drive_count
+  availability_zone = local.selected_az
+  size              = var.data_drive_size
+  type              = var.data_drive_type
+
+  # Conditional IOPS for io1/io2 and throughput for gp3
+  iops       = var.data_drive_type == "io1" || var.data_drive_type == "io2" ? var.iops : null
+  throughput = var.data_drive_type == "gp3" ? var.throughput : null
+
+  tags = merge(local.common_tags, {
+    Name = "${var.env_prefix}-data-volume-${count.index}"
+  })
+}
+
+# EBS Volume Attachments
+resource "aws_volume_attachment" "ebs_attach" {
+  count = var.vm_count * var.data_drive_count
+
+  device_name = "/dev/sd${element(["f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p"], count.index % var.data_drive_count)}"
+  volume_id   = aws_ebs_volume.data_volume[count.index].id
+  instance_id = aws_instance.database_instances[floor(count.index / var.data_drive_count)].id
+
+  depends_on = [
+    aws_instance.database_instances,
+    aws_ebs_volume.data_volume
+  ]
+}

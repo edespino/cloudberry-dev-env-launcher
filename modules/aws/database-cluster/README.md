@@ -9,6 +9,7 @@ This module creates an optimized AWS infrastructure for database clusters with a
 - **SSH Configuration**: No host key verification prompts for seamless connectivity
 - **Cost Optimization**: Configurable spot instances (60-90% savings)
 - **EBS Performance**: Configurable root disk IOPS and throughput (up to 2.67x IOPS, 4x throughput improvement)
+- **Additional EBS Volumes**: Attach multiple data volumes per instance (up to 11 drives per instance)
 - **Advanced Monitoring**: CloudWatch alarms with SQS + Lambda processing and SES email notifications (Drata compliant)
 - **Complete Networking**: VPC with public subnet, security groups, and S3 VPC endpoint
 - **Automated SSH Keys**: RSA 4096-bit key generation and management
@@ -97,6 +98,13 @@ module "database_cluster" {
   root_disk_iops         = 8000   # 2.67x improvement
   root_disk_throughput   = 500    # 4x improvement
 
+  # Additional EBS Data Volumes
+  data_drive_count  = 2           # 2 additional drives per instance
+  data_drive_size   = 500         # 500 GB per drive
+  data_drive_type   = "gp3"       # EBS volume type
+  iops              = 3000        # For io1/io2 volumes
+  throughput        = 125         # For gp3 volumes
+
   # Optional Features
   enable_monitoring    = true
   alert_email         = "ops@company.com"
@@ -138,6 +146,18 @@ module "database_cluster" {
 - **Performance**: 2.67x IOPS, 4x throughput vs default
 - **Dynamic disk discovery**: Cloud-init script automatically formats and mounts additional NVMe devices
 
+### 5. Additional EBS Data Volumes
+- **Multiple volumes per instance**: Attach up to 11 data drives per instance
+- **Flexible configuration**: Configure size, type (gp2, gp3, io1, io2, st1, sc1), IOPS, and throughput
+- **Automatic device naming**: Volumes are attached as /dev/sdf through /dev/sdp
+- **Distribution logic**: Volumes are evenly distributed across all instances in the cluster
+- **Volume types**:
+  - **gp3**: General Purpose SSD with configurable IOPS (3000-16000) and throughput (125-1000 MiB/s)
+  - **io1/io2**: Provisioned IOPS SSD for high-performance workloads
+  - **st1**: Throughput-optimized HDD for big data workloads
+  - **sc1**: Cold HDD for infrequent access
+- **Default**: No additional volumes (set `data_drive_count > 0` to enable)
+
 ## Variables
 
 | Name | Description | Type | Default | Required |
@@ -153,6 +173,11 @@ module "database_cluster" {
 | root_disk_size | Root disk size in GB | number | 100 | no |
 | root_disk_iops | Root disk IOPS (3000-16000) | number | 8000 | no |
 | root_disk_throughput | Root disk throughput MB/s (125-1000) | number | 500 | no |
+| data_drive_count | Number of additional data drives per instance | number | 0 | no |
+| data_drive_size | Size of each data drive in GB | number | 250 | no |
+| data_drive_type | EBS volume type (gp2, gp3, io1, io2, st1, sc1) | string | "gp3" | no |
+| iops | IOPS for io1/io2 volumes | number | 3000 | no |
+| throughput | Throughput in MiB/s for gp3 volumes | number | 125 | no |
 | use_spot_instances | Use spot instances for cost savings | bool | false | no |
 | spot_max_price | Maximum price for spot instances (USD/hour) | string | "0.50" | no |
 | spot_instance_strategy | Spot strategy: all/workers/mixed/none | string | "all" | no |
@@ -162,9 +187,6 @@ module "database_cluster" {
 | cloud_init_template | Path to custom cloud-init template | string | null | no |
 | hostnames | Custom hostnames for instances | list(string) | [] | no |
 | additional_tags | Additional tags for resources | map(string) | {} | no |
-
-**Note**: The following variables are defined but not currently implemented in the module:
-- `data_drive_count`, `data_drive_size`, `data_drive_type`, `iops`, `throughput` - Additional EBS volumes are not created. Use cloud-init script for dynamic disk setup instead.
 
 ## Outputs
 
@@ -176,6 +198,8 @@ module "database_cluster" {
 | vpc_id | VPC ID for integration/debugging |
 | instance_ids | EC2 instance IDs |
 | monitoring_summary | Monitoring configuration (if enabled) |
+| data_volumes | EBS data volume details (volume IDs, size, type, count) |
+| volume_attachments | EBS volume attachment details (instance mapping, device names) |
 
 ## Cost Analysis
 
@@ -281,7 +305,14 @@ module "prod_cluster" {
   root_disk_iops        = 12000
   root_disk_throughput  = 750
   root_disk_size        = 200
-  
+
+  # Additional data volumes
+  data_drive_count = 4            # 4 additional drives per instance
+  data_drive_size  = 1000         # 1TB per drive
+  data_drive_type  = "gp3"
+  iops             = 5000
+  throughput       = 250
+
   # Monitoring
   enable_monitoring = true
   alert_email      = "dba@company.com"
