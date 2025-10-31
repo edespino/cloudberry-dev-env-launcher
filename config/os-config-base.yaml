@@ -22,6 +22,22 @@ os_options:
     username: "ec2-user"
     dir_name: "al2023-cbdb-build"
 
+  centos10-cbdb-build:
+    name: "CentOS Stream 10 - Cloudberry build"
+    group: "Cloudberry - Custom Packer AMIs"
+    ami_owner: "703671893074"
+    ami_filter: "cloudberry-packer-build-centos10-*"
+    username: "ec2-user"
+    dir_name: "centos10-cbdb-build"
+
+  debian12-cbdb-build:
+    name: "Debian 12 - Cloudberry build"
+    group: "Cloudberry - Custom Packer AMIs"
+    ami_owner: "703671893074"
+    ami_filter: "cloudberry-packer-build-debian12-*"
+    username: "admin"
+    dir_name: "debian12-cbdb-build"
+
   rl8-cbdb-build:
     name: "Rocky Linux 8 - Cloudberry build"
     group: "Cloudberry - Custom Packer AMIs"
@@ -73,6 +89,22 @@ os_options:
     ami_filter: "al2023-ami-minimal-2023.*-kernel-6.1-x86_64"
     username: "ec2-user"
     dir_name: "al2023-base"
+
+  centos10-base:
+    name: "Centos Stream 10"
+    group: "Base AMIs"
+    ami_owner: "125523088429"
+    ami_filter: "CentOS Stream 10 x86_64 *"
+    username: "ec2-user"
+    dir_name: "centos10-base"
+
+  debian12-base:
+    name: "Debian 12"
+    group: "Base AMIs"
+    ami_owner: "136693071363"
+    ami_filter: "debian-12-amd64-*-*"
+    username: "admin"
+    dir_name: "debian-base"
 
   ol810-base:
     name: "Oracle Linux 8.10"
