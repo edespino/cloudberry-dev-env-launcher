@@ -229,7 +229,8 @@ create_environment() {
     local custom_name="$2"
     local instance_type="$3"
     local use_spot="$4"
-    local subdirectory="$5"
+    local deploy_dbaas="$5"
+    local subdirectory="$6"
     local actual_key="${SELECTION_MAP[$selection]}"
     local os_name="${OS_OPTIONS[$actual_key]}"
     local dir_name="${DIR_NAMES[$actual_key]}"
@@ -257,7 +258,7 @@ create_environment() {
     # Copy template directory
     echo -e "${BLUE}📁 Copying template to $target_name...${NC}"
     cp -r "$TEMPLATE_DIR" "$target_dir"
-    
+
     # Update .envrc with correct path and selected OS configuration
     local envrc_file="$target_dir/.envrc"
     if [[ -f "$envrc_file" ]]; then
@@ -273,6 +274,9 @@ create_environment() {
 
         # Replace spot instance placeholder
         sed -i.bak3 "s|__USE_SPOT_INSTANCES__|$use_spot|g" "$envrc_file"
+
+        # Replace DBaaS platform placeholder
+        sed -i.bak4 "s|__DEPLOY_DBAAS_SERVICES__|$deploy_dbaas|g" "$envrc_file"
 
         # Update env_prefix to include subdirectory to avoid collisions
         # Without subdirectory: ${USER}-rl9-cbdb-build
@@ -298,6 +302,7 @@ export TF_VAR_default_username="'"$username"'"\
         rm -f "$envrc_file.bak"
         rm -f "$envrc_file.bak2"
         rm -f "$envrc_file.bak3"
+        rm -f "$envrc_file.bak4"
     fi
 
     # Update main.tf module path for subdirectories
@@ -1085,13 +1090,56 @@ get_spot_instances() {
     done
 }
 
+# Function to get DBaaS platform deployment preference
+get_dbaas_platform() {
+    while true; do
+        echo
+        echo -e "${YELLOW}Deploy DBaaS Platform Infrastructure?${NC}"
+        echo
+        echo -e "  ${CYAN}DBaaS platform includes EKS cluster, S3 storage, and networking for Kubernetes-based services.${NC}"
+        echo -e "  ${CYAN}This enables database-as-a-service application deployment alongside your database cluster.${NC}"
+        echo
+        echo -e "  ${GREEN}[1]${NC} No - Database cluster only ${PURPLE}(default, lower cost)${NC}"
+        echo -e "  ${GREEN}[2]${NC} Yes - Deploy full DBaaS platform ${PURPLE}(EKS + S3 + ~$250/month)${NC}"
+        echo -e "  ${GREEN}[q]${NC} Quit"
+        echo
+        echo -n -e "${YELLOW}Select option [1/2/q] or press Enter for default (No): ${NC}"
+        read -r choice
+
+        # Default to false (no dbaas) if empty
+        if [[ -z "$choice" ]]; then
+            choice="1"
+        fi
+
+        case "$choice" in
+            "q"|"Q")
+                echo -e "${YELLOW}👋 Goodbye!${NC}"
+                exit 0
+                ;;
+            "1")
+                SELECTED_DEPLOY_DBAAS="false"
+                return 0
+                ;;
+            "2")
+                SELECTED_DEPLOY_DBAAS="true"
+                return 0
+                ;;
+            *)
+                echo -e "${RED}❌ Invalid selection. Please choose 1, 2, or q.${NC}"
+                echo
+                ;;
+        esac
+    done
+}
+
 # Function to confirm environment creation
 confirm_creation() {
     local selection=$1
     local custom_name="$2"
     local instance_type="$3"
     local use_spot="$4"
-    local subdirectory="$5"
+    local deploy_dbaas="$5"
+    local subdirectory="$6"
     local actual_key="${SELECTION_MAP[$selection]}"
     local os_name="${OS_OPTIONS[$actual_key]}"
     local dir_name="${custom_name:-${DIR_NAMES[$actual_key]}}"
@@ -1121,6 +1169,7 @@ confirm_creation() {
         echo -e "  ${PURPLE}Username:${NC} ${DEFAULT_USERNAMES[$actual_key]}"
         echo -e "  ${PURPLE}Instance Type:${NC} $instance_type"
         echo -e "  ${PURPLE}Spot Instances:${NC} $([ "$use_spot" = "true" ] && echo "✓ Enabled" || echo "✗ Disabled")"
+        echo -e "  ${PURPLE}DBaaS Platform:${NC} $([ "$deploy_dbaas" = "true" ] && echo "✓ Enabled (EKS + S3)" || echo "✗ Disabled")"
         echo
         echo -e "${YELLOW}Actions:${NC}"
         echo -e "  ${GREEN}[c]${NC} Create environment ${PURPLE}(default)${NC}"
@@ -1191,17 +1240,21 @@ main() {
                             get_spot_instances
                             local use_spot="$SELECTED_USE_SPOT"
 
-                            # Step 6: Confirm and create
+                            # Step 6: Get DBaaS platform preference
+                            get_dbaas_platform
+                            local deploy_dbaas="$SELECTED_DEPLOY_DBAAS"
+
+                            # Step 7: Confirm and create
                             local confirm_result
                             set +e  # Temporarily disable exit on error to capture return code
-                            confirm_creation "$selection" "$custom_name" "$instance_type" "$use_spot" "$subdirectory"
+                            confirm_creation "$selection" "$custom_name" "$instance_type" "$use_spot" "$deploy_dbaas" "$subdirectory"
                             confirm_result=$?
                             set -e  # Re-enable exit on error
 
                             case $confirm_result in
                                 0)
                                     # Create environment and exit
-                                    create_environment "$selection" "$custom_name" "$instance_type" "$use_spot" "$subdirectory"
+                                    create_environment "$selection" "$custom_name" "$instance_type" "$use_spot" "$deploy_dbaas" "$subdirectory"
                                     exit 0
                                     ;;
                                 1)

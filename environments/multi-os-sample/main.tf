@@ -63,3 +63,34 @@ module "database_cluster" {
     Purpose     = "Database Cluster Testing"
   }
 }
+
+# DBaaS Platform Module (optional EKS + S3 infrastructure)
+module "dbaas_platform" {
+  count  = var.deploy_dbaas_services ? 1 : 0
+  source = "../../modules/aws/dbaas-platform"
+
+  # Core Configuration (from database cluster)
+  region           = var.region
+  env_prefix       = var.env_prefix
+  vpc_id           = module.database_cluster.vpc_id
+  public_subnet_id = module.database_cluster.subnet_id
+
+  # EKS Configuration
+  eks_cluster_version     = var.eks_cluster_version
+  eks_node_instance_types = var.eks_node_instance_types
+  eks_desired_capacity    = var.eks_desired_capacity
+  eks_max_capacity        = var.eks_max_capacity
+  use_spot_instances      = var.use_spot_instances
+
+  # S3 Configuration
+  enable_s3_versioning = var.enable_s3_versioning
+  s3_lifecycle_days    = var.s3_lifecycle_days
+
+  # Tags
+  common_tags = {
+    Project     = "Cloudberry Database Environment"
+    Environment = "Development"
+    Purpose     = "DBaaS Platform Infrastructure"
+    ManagedBy   = "Terraform"
+  }
+}

@@ -9,6 +9,7 @@ This repository provides Terraform modules and configurations to deploy scalable
 ## Features
 
 - **Interactive OS Selection**: Choose from 15+ operating systems with guided setup and grouped display
+- **DBaaS Platform Module**: Optional EKS + S3 infrastructure for database-as-a-service deployment
 - **Custom Cloudberry AMIs**: Pre-configured images from Synx Data Labs with build dependencies
 - **Simple Setup**: Local state files by default - no S3/DynamoDB required
 - **Automated Infrastructure**: Complete AWS infrastructure provisioning
@@ -38,7 +39,9 @@ This repository provides Terraform modules and configurations to deploy scalable
 ├── lib/                    # Shared libraries
 │   └── spot-functions.sh   # Spot instance helper functions
 ├── modules/                # Reusable Terraform modules
-│   └── aws/database-cluster/ # Database cluster module
+│   └── aws/
+│       ├── database-cluster/ # Database cluster module
+│       └── dbaas-platform/   # DBaaS platform module (EKS + S3)
 ├── LICENSE                 # Apache 2.0 License
 ├── NOTICE                  # Copyright notices
 ├── CONTRIBUTING.md         # Contribution guidelines
@@ -84,7 +87,8 @@ Before getting started, ensure you have the required tools and AWS configuration
    #  3. Choose directory name
    #  4. Select instance type (C7i/C6i/C5)
    #  5. Configure spot instances
-   #  6. Confirm and create
+   #  6. Deploy DBaaS platform (optional, EKS + S3)
+   #  7. Confirm and create
 
    # Navigate to created environment
    cd environments/your-selected-env
@@ -219,6 +223,24 @@ The `database-cluster` module provides:
 - **Monitoring**: CloudWatch metrics and alarms
 - **Security**: IAM roles and policies
 
+### DBaaS Platform Module (NEW)
+
+The `dbaas-platform` module provides optional cloud-native infrastructure for database-as-a-service applications:
+
+- **Amazon EKS**: Kubernetes cluster with auto-scaling node groups
+- **Amazon S3**: Object storage for data and backups with encryption and lifecycle policies
+- **Networking**: Private subnets, NAT Gateway, and multi-AZ support
+- **Security**: IRSA-based S3 access (no long-lived credentials), least privilege IAM policies
+- **Cost Optimization**: Spot instance support, auto-scaling, and S3 lifecycle management
+
+**Use Cases:**
+- Deploy database-as-a-service applications alongside Cloudberry databases
+- Kubernetes-based service orchestration
+- Cloud-native storage integration
+- Development and testing of DBaaS features
+
+**Estimated Cost:** ~$245-285/month for development environment (with spot instances enabled)
+
 ## Security Considerations
 
 - All data is encrypted at rest and in transit
@@ -248,6 +270,7 @@ The deployment includes:
 ### 🛠️ Module Documentation
 
 - **[Database Cluster Module](modules/aws/database-cluster/README.md)** - Detailed module reference
+- **[DBaaS Platform Module](modules/aws/dbaas-platform/README.md)** - EKS and S3 infrastructure for DBaaS
 
 ## Contributing
 

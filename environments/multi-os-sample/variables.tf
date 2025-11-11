@@ -127,3 +127,48 @@ variable "generate_inventory" {
   type        = bool
   default     = false
 }
+
+# DBaaS-specific variables
+variable "deploy_dbaas_services" {
+  description = "Whether to deploy DBaaS-specific resources (EKS, S3)"
+  type        = bool
+  default     = false
+}
+
+# EKS Configuration
+variable "eks_cluster_version" {
+  description = "Kubernetes version for EKS cluster"
+  type        = string
+  default     = "1.33"
+}
+
+variable "eks_node_instance_types" {
+  description = "Instance types for EKS worker nodes"
+  type        = list(string)
+  default     = ["t3.xlarge"]
+}
+
+variable "eks_desired_capacity" {
+  description = "Desired number of EKS worker nodes"
+  type        = number
+  default     = 4
+}
+
+variable "eks_max_capacity" {
+  description = "Maximum number of EKS worker nodes"
+  type        = number
+  default     = 8
+}
+
+# S3 Configuration
+variable "enable_s3_versioning" {
+  description = "Enable versioning on S3 buckets"
+  type        = bool
+  default     = true
+}
+
+variable "s3_lifecycle_days" {
+  description = "Days to retain objects in S3"
+  type        = number
+  default     = 30
+}
