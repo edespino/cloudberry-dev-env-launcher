@@ -42,10 +42,13 @@ The module creates a cloud-native DBaaS platform that integrates seamlessly with
 ## Features
 
 ### EKS Cluster
-- Configurable Kubernetes version (default: 1.33)
+- Configurable Kubernetes version (default: 1.34)
 - Auto-scaling node groups with spot instance support
 - Comprehensive logging enabled (API, audit, authenticator, controller, scheduler)
 - OIDC provider for IAM Roles for Service Accounts (IRSA)
+- EBS CSI driver for persistent storage with IRSA
+- Configurable node disk size (default: 50GB)
+- Default storage class (gp2) pre-configured
 
 ### S3 Storage
 - Two dedicated buckets (primary storage and backups)
@@ -92,7 +95,7 @@ module "dbaas_platform" {
   public_subnet_id = module.database_cluster.subnet_id
 
   # EKS configuration
-  eks_cluster_version     = "1.33"
+  eks_cluster_version     = "1.34"
   eks_node_instance_types = ["t3.xlarge"]
   eks_desired_capacity    = 4
   eks_max_capacity        = 8
@@ -137,11 +140,12 @@ module "dbaas_platform" {
 | vpc_id | VPC ID from the database cluster module | string | - | yes |
 | public_subnet_id | Public subnet ID for NAT Gateway | string | - | yes |
 | availability_zones | List of AZs to use for EKS subnets | list(string) | [] | no |
-| eks_cluster_version | Kubernetes version for EKS cluster | string | "1.33" | no |
+| eks_cluster_version | Kubernetes version for EKS cluster | string | "1.34" | no |
 | eks_node_instance_types | Instance types for EKS worker nodes | list(string) | ["t3.xlarge"] | no |
 | eks_desired_capacity | Desired number of EKS worker nodes | number | 4 | no |
 | eks_max_capacity | Maximum number of EKS worker nodes | number | 8 | no |
 | eks_min_capacity | Minimum number of EKS worker nodes | number | 1 | no |
+| eks_node_disk_size | Disk size in GB for EKS worker nodes | number | 50 | no |
 | use_spot_instances | Use spot instances for EKS worker nodes | bool | false | no |
 | enable_s3_versioning | Enable versioning on S3 buckets | bool | true | no |
 | s3_lifecycle_days | Days to retain objects in S3 | number | 30 | no |
@@ -216,6 +220,33 @@ kubectl apply -f test-pod.yaml
 
 # Verify S3 access
 kubectl exec s3-test -- aws s3 ls
+```
+
+### 4. Verify EBS CSI Driver
+
+```bash
+# Check EBS CSI driver status
+kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-ebs-csi-driver
+
+# Verify storage classes
+kubectl get storageclass
+
+# Test persistent volume creation
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: test-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+EOF
+
+# Check PVC status
+kubectl get pvc test-pvc
 ```
 
 ## Cost Optimization

@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### DBaaS Platform Module
 - **New Module**: `modules/aws/dbaas-platform/` - Optional cloud-native infrastructure for database-as-a-service deployment
-  - **Amazon EKS**: Kubernetes cluster (v1.33) with auto-scaling node groups (1-8 nodes)
+  - **Amazon EKS**: Kubernetes cluster (v1.34) with auto-scaling node groups (1-8 nodes)
   - **Amazon S3**: Two buckets (storage + backups) with encryption, versioning, and lifecycle policies
   - **Networking**: Private subnets across multiple AZs, NAT Gateway, and route tables
   - **Security**: IRSA-based IAM roles for secure S3 access without long-lived credentials
@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Module Features
 - **EKS Cluster**:
-  - Configurable Kubernetes version (default: 1.33)
+  - Configurable Kubernetes version (default: 1.34)
   - Auto-scaling node groups with spot instance support
   - Comprehensive logging (API, audit, authenticator, controller, scheduler)
   - OIDC provider for IAM Roles for Service Accounts (IRSA)

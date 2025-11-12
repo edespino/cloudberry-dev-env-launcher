@@ -29,7 +29,7 @@ variable "availability_zones" {
 variable "eks_cluster_version" {
   description = "Kubernetes version for EKS cluster"
   type        = string
-  default     = "1.33"
+  default     = "1.34"
 }
 
 variable "eks_node_instance_types" {
@@ -54,6 +54,12 @@ variable "eks_min_capacity" {
   description = "Minimum number of EKS worker nodes"
   type        = number
   default     = 1
+}
+
+variable "eks_node_disk_size" {
+  description = "Disk size in GB for EKS worker nodes"
+  type        = number
+  default     = 50
 }
 
 variable "use_spot_instances" {

@@ -139,7 +139,7 @@ variable "deploy_dbaas_services" {
 variable "eks_cluster_version" {
   description = "Kubernetes version for EKS cluster"
   type        = string
-  default     = "1.33"
+  default     = "1.34"
 }
 
 variable "eks_node_instance_types" {
