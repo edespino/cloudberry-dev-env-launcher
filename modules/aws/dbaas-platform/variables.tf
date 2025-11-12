@@ -98,7 +98,7 @@ variable "common_tags" {
 variable "service_account_namespace" {
   description = "Kubernetes namespace for the DBaaS service account"
   type        = string
-  default     = "default"
+  default     = "dbaas"
 }
 
 variable "service_account_name" {
