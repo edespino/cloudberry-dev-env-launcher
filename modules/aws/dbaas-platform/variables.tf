@@ -106,3 +106,119 @@ variable "service_account_name" {
   type        = string
   default     = "dbaas-s3-access"
 }
+
+# IAM User Configuration (Fallback for applications that don't support IRSA)
+variable "create_iam_user" {
+  description = "Create IAM user with static credentials (fallback when IRSA not supported by application)"
+  type        = bool
+  default     = true  # Default to true since synxdb-dbaas-integration v1.1.0 does not support IRSA
+}
+
+# RDS PostgreSQL Configuration
+variable "rds_engine_version" {
+  description = "PostgreSQL engine version for RDS"
+  type        = string
+  default     = "16.10"
+}
+
+variable "rds_instance_class" {
+  description = "Instance class for RDS database"
+  type        = string
+  default     = "db.t3.medium"
+}
+
+variable "rds_allocated_storage" {
+  description = "Initial allocated storage in GB for RDS"
+  type        = number
+  default     = 20
+}
+
+variable "rds_max_allocated_storage" {
+  description = "Maximum allocated storage in GB for RDS autoscaling"
+  type        = number
+  default     = 100
+}
+
+variable "rds_storage_type" {
+  description = "Storage type for RDS (gp2, gp3, io1)"
+  type        = string
+  default     = "gp3"
+}
+
+variable "rds_storage_encrypted" {
+  description = "Enable storage encryption for RDS"
+  type        = bool
+  default     = true
+}
+
+variable "rds_database_name" {
+  description = "Name of the PostgreSQL database to create"
+  type        = string
+  default     = "dbaas"
+}
+
+variable "rds_master_username" {
+  description = "Master username for RDS PostgreSQL"
+  type        = string
+  default     = "dbaasadmin"
+}
+
+variable "rds_multi_az" {
+  description = "Enable Multi-AZ deployment for RDS"
+  type        = bool
+  default     = false
+}
+
+variable "rds_backup_retention_days" {
+  description = "Number of days to retain automated backups"
+  type        = number
+  default     = 7
+}
+
+variable "rds_backup_window" {
+  description = "Preferred backup window (UTC)"
+  type        = string
+  default     = "03:00-04:00"
+}
+
+variable "rds_maintenance_window" {
+  description = "Preferred maintenance window (UTC)"
+  type        = string
+  default     = "sun:04:00-sun:05:00"
+}
+
+variable "rds_performance_insights_enabled" {
+  description = "Enable Performance Insights for RDS"
+  type        = bool
+  default     = true
+}
+
+variable "rds_deletion_protection" {
+  description = "Enable deletion protection for RDS"
+  type        = bool
+  default     = false
+}
+
+variable "rds_skip_final_snapshot" {
+  description = "Skip final snapshot when destroying RDS instance"
+  type        = bool
+  default     = false
+}
+
+variable "rds_auto_minor_version_upgrade" {
+  description = "Enable automatic minor version upgrades"
+  type        = bool
+  default     = true
+}
+
+variable "rds_apply_immediately" {
+  description = "Apply changes immediately instead of during maintenance window"
+  type        = bool
+  default     = false
+}
+
+variable "rds_max_connections" {
+  description = "Maximum number of database connections"
+  type        = string
+  default     = "200"
+}

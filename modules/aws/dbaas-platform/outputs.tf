@@ -133,6 +133,91 @@ output "service_account_annotation" {
   value       = "eks.amazonaws.com/role-arn=${aws_iam_role.dbaas_s3_access.arn}"
 }
 
+# IAM User Outputs (Static Credentials Fallback)
+output "iam_user_name" {
+  description = "Name of the IAM user for S3 access (if created)"
+  value       = var.create_iam_user ? aws_iam_user.dbaas_s3_user[0].name : null
+}
+
+output "iam_user_arn" {
+  description = "ARN of the IAM user for S3 access (if created)"
+  value       = var.create_iam_user ? aws_iam_user.dbaas_s3_user[0].arn : null
+}
+
+output "iam_access_key_id" {
+  description = "Access key ID for IAM user (if created) - SENSITIVE"
+  value       = var.create_iam_user ? aws_iam_access_key.dbaas_s3_user_key[0].id : null
+  sensitive   = true
+}
+
+output "iam_secret_access_key" {
+  description = "Secret access key for IAM user (if created) - SENSITIVE"
+  value       = var.create_iam_user ? aws_iam_access_key.dbaas_s3_user_key[0].secret : null
+  sensitive   = true
+}
+
+# RDS PostgreSQL Outputs
+output "rds_instance_id" {
+  description = "ID of the RDS PostgreSQL instance"
+  value       = aws_db_instance.dbaas_postgres.id
+}
+
+output "rds_instance_arn" {
+  description = "ARN of the RDS PostgreSQL instance"
+  value       = aws_db_instance.dbaas_postgres.arn
+}
+
+output "rds_endpoint" {
+  description = "Connection endpoint for RDS PostgreSQL (host:port)"
+  value       = aws_db_instance.dbaas_postgres.endpoint
+}
+
+output "rds_address" {
+  description = "Hostname of the RDS PostgreSQL instance"
+  value       = aws_db_instance.dbaas_postgres.address
+}
+
+output "rds_port" {
+  description = "Port of the RDS PostgreSQL instance"
+  value       = aws_db_instance.dbaas_postgres.port
+}
+
+output "rds_database_name" {
+  description = "Name of the PostgreSQL database"
+  value       = aws_db_instance.dbaas_postgres.db_name
+}
+
+output "rds_master_username" {
+  description = "Master username for RDS PostgreSQL"
+  value       = aws_db_instance.dbaas_postgres.username
+}
+
+output "rds_master_password" {
+  description = "Master password for RDS PostgreSQL - SENSITIVE"
+  value       = random_password.rds_master_password.result
+  sensitive   = true
+}
+
+output "rds_jdbc_url" {
+  description = "JDBC connection URL for the RDS PostgreSQL database"
+  value       = "jdbc:postgresql://${aws_db_instance.dbaas_postgres.endpoint}/${aws_db_instance.dbaas_postgres.db_name}"
+}
+
+output "rds_security_group_id" {
+  description = "Security group ID for RDS instance"
+  value       = aws_security_group.dbaas_rds.id
+}
+
+output "rds_secrets_manager_arn" {
+  description = "ARN of the Secrets Manager secret containing RDS credentials"
+  value       = aws_secretsmanager_secret.dbaas_rds_credentials.arn
+}
+
+output "rds_secrets_manager_name" {
+  description = "Name of the Secrets Manager secret containing RDS credentials"
+  value       = aws_secretsmanager_secret.dbaas_rds_credentials.name
+}
+
 # Summary Output
 output "dbaas_platform_summary" {
   description = "Summary of all DBaaS platform resources"
@@ -147,6 +232,13 @@ output "dbaas_platform_summary" {
     s3_buckets = {
       storage_bucket = aws_s3_bucket.dbaas_storage.id
       backup_bucket  = aws_s3_bucket.dbaas_backups.id
+    }
+    rds_database = {
+      endpoint      = aws_db_instance.dbaas_postgres.endpoint
+      database_name = aws_db_instance.dbaas_postgres.db_name
+      username      = aws_db_instance.dbaas_postgres.username
+      jdbc_url      = "jdbc:postgresql://${aws_db_instance.dbaas_postgres.endpoint}/${aws_db_instance.dbaas_postgres.db_name}"
+      secrets_arn   = aws_secretsmanager_secret.dbaas_rds_credentials.arn
     }
     networking = {
       nat_gateway_id = aws_nat_gateway.main.id
