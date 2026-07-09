@@ -151,7 +151,10 @@ resource "aws_vpc_endpoint" "s3" {
 }
 
 # Placement Group for high-performance networking
+# Only created for multi-node clusters; a cluster PG rejects burstable (t3) types,
+# so single-node environments skip it entirely.
 resource "aws_placement_group" "cluster" {
+  count    = var.vm_count > 1 ? 1 : 0
   name     = "${var.env_prefix}-cluster-pg"
   strategy = "cluster"
 

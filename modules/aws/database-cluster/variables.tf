@@ -13,6 +13,10 @@ variable "vm_count" {
   description = "The number of instances to create"
   type        = number
   default     = 1
+  validation {
+    condition     = floor(var.vm_count) == var.vm_count && var.vm_count >= 1 && var.vm_count <= 16
+    error_message = "vm_count must be an integer between 1 and 16 inclusive."
+  }
 }
 
 # Instance Configuration
