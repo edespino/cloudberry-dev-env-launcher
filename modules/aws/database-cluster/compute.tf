@@ -10,7 +10,7 @@ resource "aws_instance" "database_instances" {
   subnet_id                   = aws_subnet.public.id
   associate_public_ip_address = true
   iam_instance_profile        = aws_iam_instance_profile.ec2_cluster_discovery.name
-  placement_group             = aws_placement_group.cluster.id
+  placement_group             = var.vm_count > 1 ? aws_placement_group.cluster[0].id : null
 
   # Spot instance configuration
   dynamic "instance_market_options" {

@@ -314,6 +314,7 @@ create_environment() {
     local use_spot="$4"
     local deploy_dbaas="$5"
     local subdirectory="$6"
+    local vm_count="$7"
     local actual_key="${SELECTION_MAP[$selection]}"
     local os_name="${OS_OPTIONS[$actual_key]}"
     local dir_name="${DIR_NAMES[$actual_key]}"
@@ -360,6 +361,9 @@ create_environment() {
 
         # Replace instance type placeholder
         replace_placeholder "$envrc_file" "__INSTANCE_TYPE__" "$instance_type"
+
+        # Replace VM/node count placeholder
+        replace_placeholder "$envrc_file" "__VM_COUNT__" "$vm_count"
 
         # Replace spot instance placeholder
         replace_placeholder "$envrc_file" "__USE_SPOT_INSTANCES__" "$use_spot"
@@ -1155,9 +1159,61 @@ get_directory_name() {
     return 0
 }
 
-# Function to get instance type selection (two-level: group, then type)
+# Function to get database node count (drives vm_count, placement group, and
+# whether the Burstable instance-type group is offered).
+get_node_count() {
+    while true; do
+        echo
+        echo -e "${YELLOW}Number of Database Nodes:${NC}"
+        echo
+        echo -e "  ${CYAN}How many database instances to provision (1-16).${NC}"
+        echo -e "  ${CYAN}1 node:  no AWS cluster placement group; all instance-type groups available.${NC}"
+        echo -e "  ${CYAN}2+ nodes: cluster placement group created; Burstable (t3) types unavailable.${NC}"
+        echo
+        echo -e "  ${GREEN}[q]${NC} Quit"
+        echo
+        echo -n -e "${YELLOW}Enter node count [1-16/q] or press Enter for default (1): ${NC}"
+        read -r choice
+
+        # Default to a single node on empty Enter
+        if [[ -z "$choice" ]]; then
+            SELECTED_VM_COUNT=1
+            return 0
+        fi
+
+        # Check for quit option
+        if [[ "$choice" == "q" || "$choice" == "Q" ]]; then
+            echo -e "${YELLOW}👋 Goodbye!${NC}"
+            exit 0
+        fi
+
+        # Validate node count (integer, within range)
+        if ! [[ "$choice" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > 16 )); then
+            echo -e "${RED}❌ Invalid selection. Please enter an integer 1-16 or q.${NC}"
+            continue
+        fi
+
+        SELECTED_VM_COUNT="$choice"
+        return 0
+    done
+}
+
+# Function to get instance type selection (two-level: group, then type).
+# Accepts the chosen node count: when >1 the Burstable group is hidden because
+# AWS cluster placement groups reject burstable (t3) instance types.
 get_instance_type() {
-    local num_groups=${#INSTANCE_GROUP_ORDER[@]}
+    local vm_count="${1:-1}"
+
+    # Build the active group list, omitting Burstable for multi-node clusters.
+    local -a group_order=()
+    local g
+    for g in "${INSTANCE_GROUP_ORDER[@]}"; do
+        if (( vm_count > 1 )) && [[ "$g" == "Burstable" ]]; then
+            continue
+        fi
+        group_order+=("$g")
+    done
+    local num_groups=${#group_order[@]}
 
     # Group-selection loop
     while true; do
@@ -1168,7 +1224,7 @@ get_instance_type() {
         echo
         local gi
         for ((gi = 0; gi < num_groups; gi++)); do
-            local group="${INSTANCE_GROUP_ORDER[$gi]}"
+            local group="${group_order[$gi]}"
             local caveat="${INSTANCE_GROUP_CAVEATS[$group]:-}"
             if [[ -n "$caveat" ]]; then
                 echo -e "  ${GREEN}[$((gi + 1))]${NC} ${group} ${PURPLE}(${caveat})${NC}"
@@ -1201,7 +1257,7 @@ get_instance_type() {
             continue
         fi
 
-        local group="${INSTANCE_GROUP_ORDER[$((group_choice - 1))]}"
+        local group="${group_order[$((group_choice - 1))]}"
         local -a types=()
         read -r -a types <<< "${INSTANCE_GROUP_TYPES[$group]}"
         local num_types=${#types[@]}
@@ -1350,6 +1406,7 @@ confirm_creation() {
     local use_spot="$4"
     local deploy_dbaas="$5"
     local subdirectory="$6"
+    local vm_count="$7"
     local actual_key="${SELECTION_MAP[$selection]}"
     local os_name="${OS_OPTIONS[$actual_key]}"
     local dir_name="${custom_name:-${DIR_NAMES[$actual_key]}}"
@@ -1377,13 +1434,14 @@ confirm_creation() {
         echo -e "  ${PURPLE}AMI Owner:${NC} ${AMI_OWNERS[$actual_key]}"
         echo -e "  ${PURPLE}AMI Filter:${NC} ${AMI_FILTERS[$actual_key]}"
         echo -e "  ${PURPLE}Username:${NC} ${DEFAULT_USERNAMES[$actual_key]}"
+        echo -e "  ${PURPLE}Database Nodes:${NC} $vm_count $([ "$vm_count" -gt 1 ] && echo "(cluster placement group)" || echo "(no placement group)")"
         echo -e "  ${PURPLE}Instance Type:${NC} $instance_type"
         echo -e "  ${PURPLE}Spot Instances:${NC} $([ "$use_spot" = "true" ] && echo "✓ Enabled" || echo "✗ Disabled")"
         echo -e "  ${PURPLE}DBaaS Platform:${NC} $([ "$deploy_dbaas" = "true" ] && echo "✓ Enabled (EKS + S3)" || echo "✗ Disabled")"
         echo
         echo -e "${YELLOW}Actions:${NC}"
         echo -e "  ${GREEN}[c]${NC} Create environment ${PURPLE}(default)${NC}"
-        echo -e "  ${GREEN}[b]${NC} Back to instance configuration"
+        echo -e "  ${GREEN}[b]${NC} Reconfigure (from node count)"
         echo -e "  ${GREEN}[o]${NC} Back to OS selection"
         echo -e "  ${GREEN}[q]${NC} Quit"
         echo
@@ -1442,29 +1500,33 @@ main() {
                         local custom_name="$SELECTED_CUSTOM_NAME"
 
                         while true; do
-                            # Step 4: Get instance type
-                            get_instance_type
+                            # Step 4: Get database node count
+                            get_node_count
+                            local vm_count="$SELECTED_VM_COUNT"
+
+                            # Step 5: Get instance type (Burstable hidden when vm_count > 1)
+                            get_instance_type "$vm_count"
                             local instance_type="$SELECTED_INSTANCE_TYPE"
 
-                            # Step 5: Get spot instance preference
+                            # Step 6: Get spot instance preference
                             get_spot_instances
                             local use_spot="$SELECTED_USE_SPOT"
 
-                            # Step 6: Get DBaaS platform preference
+                            # Step 7: Get DBaaS platform preference
                             get_dbaas_platform
                             local deploy_dbaas="$SELECTED_DEPLOY_DBAAS"
 
-                            # Step 7: Confirm and create
+                            # Step 8: Confirm and create
                             local confirm_result
                             set +e  # Temporarily disable exit on error to capture return code
-                            confirm_creation "$selection" "$custom_name" "$instance_type" "$use_spot" "$deploy_dbaas" "$subdirectory"
+                            confirm_creation "$selection" "$custom_name" "$instance_type" "$use_spot" "$deploy_dbaas" "$subdirectory" "$vm_count"
                             confirm_result=$?
                             set -e  # Re-enable exit on error
 
                             case $confirm_result in
                                 0)
                                     # Create environment and exit
-                                    create_environment "$selection" "$custom_name" "$instance_type" "$use_spot" "$deploy_dbaas" "$subdirectory"
+                                    create_environment "$selection" "$custom_name" "$instance_type" "$use_spot" "$deploy_dbaas" "$subdirectory" "$vm_count"
                                     exit 0
                                     ;;
                                 1)
