@@ -1219,12 +1219,14 @@ get_instance_type() {
             for ((ti = 0; ti < num_types; ti++)); do
                 local type="${types[$ti]}"
                 local spec="${INSTANCE_TYPE_SPECS[$type]:-}"
+                local idx
+                idx=$(printf '%2d' "$((ti + 1))")
                 local padded
                 padded=$(printf '%-12s' "$type")
                 if [[ "$type" == "$DEFAULT_INSTANCE_TYPE" ]]; then
-                    echo -e "    ${GREEN}[$((ti + 1))]${NC} ${padded} (${spec}) ${PURPLE}[default]${NC}"
+                    echo -e "    ${GREEN}[${idx}]${NC} ${padded} (${spec}) ${PURPLE}[default]${NC}"
                 else
-                    echo -e "    ${GREEN}[$((ti + 1))]${NC} ${padded} (${spec})"
+                    echo -e "    ${GREEN}[${idx}]${NC} ${padded} (${spec})"
                 fi
             done
             echo
