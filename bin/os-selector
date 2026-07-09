@@ -52,6 +52,39 @@ declare -A INSTANCE_GROUP_TYPES=(
 declare -A INSTANCE_GROUP_CAVEATS=(
     ["Burstable"]="baseline CPU + credits; not recommended for sustained database load"
 )
+# Per-type vCPU/RAM annotations shown after each type name in the menu.
+# Every type in INSTANCE_GROUP_TYPES must have a matching entry here.
+declare -A INSTANCE_TYPE_SPECS=(
+    ["m7i.large"]="2 vCPU, 8 GB"
+    ["m7i.xlarge"]="4 vCPU, 16 GB"
+    ["m7i.2xlarge"]="8 vCPU, 32 GB"
+    ["m7i.4xlarge"]="16 vCPU, 64 GB"
+    ["m7i.8xlarge"]="32 vCPU, 128 GB"
+    ["c7i.large"]="2 vCPU, 4 GB"
+    ["c7i.xlarge"]="4 vCPU, 8 GB"
+    ["c7i.2xlarge"]="8 vCPU, 16 GB"
+    ["c7i.4xlarge"]="16 vCPU, 32 GB"
+    ["c7i.8xlarge"]="32 vCPU, 64 GB"
+    ["c6i.xlarge"]="4 vCPU, 8 GB"
+    ["c6i.2xlarge"]="8 vCPU, 16 GB"
+    ["c6i.4xlarge"]="16 vCPU, 32 GB"
+    ["c6i.8xlarge"]="32 vCPU, 64 GB"
+    ["c5.xlarge"]="4 vCPU, 8 GB"
+    ["c5.2xlarge"]="8 vCPU, 16 GB"
+    ["c5.4xlarge"]="16 vCPU, 32 GB"
+    ["c5.9xlarge"]="36 vCPU, 72 GB"
+    ["r7i.large"]="2 vCPU, 16 GB"
+    ["r7i.xlarge"]="4 vCPU, 32 GB"
+    ["r7i.2xlarge"]="8 vCPU, 64 GB"
+    ["r7i.4xlarge"]="16 vCPU, 128 GB"
+    ["t3.nano"]="2 vCPU, 0.5 GB"
+    ["t3.micro"]="2 vCPU, 1 GB"
+    ["t3.small"]="2 vCPU, 2 GB"
+    ["t3.medium"]="2 vCPU, 4 GB"
+    ["t3.large"]="2 vCPU, 8 GB"
+    ["t3.xlarge"]="4 vCPU, 16 GB"
+    ["t3.2xlarge"]="8 vCPU, 32 GB"
+)
 DEFAULT_INSTANCE_TYPE="c7i.4xlarge"
 
 # Read a required field for an OS option from a YAML config file.
@@ -1136,7 +1169,7 @@ get_instance_type() {
         local gi
         for ((gi = 0; gi < num_groups; gi++)); do
             local group="${INSTANCE_GROUP_ORDER[$gi]}"
-            local caveat="${INSTANCE_GROUP_CAVEATS[$group]}"
+            local caveat="${INSTANCE_GROUP_CAVEATS[$group]:-}"
             if [[ -n "$caveat" ]]; then
                 echo -e "  ${GREEN}[$((gi + 1))]${NC} ${group} ${PURPLE}(${caveat})${NC}"
             else
@@ -1177,7 +1210,7 @@ get_instance_type() {
         while true; do
             echo
             echo -e "${CYAN}${group} Instances:${NC}"
-            local caveat="${INSTANCE_GROUP_CAVEATS[$group]}"
+            local caveat="${INSTANCE_GROUP_CAVEATS[$group]:-}"
             if [[ -n "$caveat" ]]; then
                 echo -e "  ${PURPLE}${caveat}${NC}"
             fi
@@ -1185,10 +1218,13 @@ get_instance_type() {
             local ti
             for ((ti = 0; ti < num_types; ti++)); do
                 local type="${types[$ti]}"
+                local spec="${INSTANCE_TYPE_SPECS[$type]:-}"
+                local padded
+                padded=$(printf '%-12s' "$type")
                 if [[ "$type" == "$DEFAULT_INSTANCE_TYPE" ]]; then
-                    echo -e "    ${GREEN}[$((ti + 1))]${NC} ${type} ${PURPLE}[default]${NC}"
+                    echo -e "    ${GREEN}[$((ti + 1))]${NC} ${padded} (${spec}) ${PURPLE}[default]${NC}"
                 else
-                    echo -e "    ${GREEN}[$((ti + 1))]${NC} ${type}"
+                    echo -e "    ${GREEN}[$((ti + 1))]${NC} ${padded} (${spec})"
                 fi
             done
             echo
