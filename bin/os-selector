@@ -30,20 +30,60 @@ PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# Instance type options (standard AWS instance types)
-declare -A INSTANCE_TYPES=(
-    ["1"]="c7i.xlarge"
-    ["2"]="c7i.2xlarge"
-    ["3"]="c7i.4xlarge"
-    ["4"]="c7i.8xlarge"
-    ["5"]="c6i.xlarge"
-    ["6"]="c6i.2xlarge"
-    ["7"]="c6i.4xlarge"
-    ["8"]="c6i.8xlarge"
-    ["9"]="c5.xlarge"
-    ["10"]="c5.2xlarge"
-    ["11"]="c5.4xlarge"
-    ["12"]="c5.9xlarge"
+# Instance type options (standard AWS instance types, Intel/x86 only).
+# Two-level menu: pick a group, then a type within that group.
+# INSTANCE_GROUP_ORDER defines the prompt order; INSTANCE_GROUP_TYPES maps
+# each group to its space-separated list of instance types (selection order).
+# The Compute Optimized group preserves the original 12 flat-menu entries
+# verbatim, plus a new smaller c7i.large entry.
+declare -a INSTANCE_GROUP_ORDER=(
+    "General Purpose"
+    "Compute Optimized"
+    "Memory Optimized"
+    "Burstable"
+)
+declare -A INSTANCE_GROUP_TYPES=(
+    ["General Purpose"]="m7i.large m7i.xlarge m7i.2xlarge m7i.4xlarge m7i.8xlarge"
+    ["Compute Optimized"]="c7i.large c7i.xlarge c7i.2xlarge c7i.4xlarge c7i.8xlarge c6i.xlarge c6i.2xlarge c6i.4xlarge c6i.8xlarge c5.xlarge c5.2xlarge c5.4xlarge c5.9xlarge"
+    ["Memory Optimized"]="r7i.large r7i.xlarge r7i.2xlarge r7i.4xlarge"
+    ["Burstable"]="t3.nano t3.micro t3.small t3.medium t3.large t3.xlarge t3.2xlarge"
+)
+# Optional inline caveat printed next to a group header / above its type list.
+declare -A INSTANCE_GROUP_CAVEATS=(
+    ["Burstable"]="baseline CPU + credits; not recommended for sustained database load"
+)
+# Per-type vCPU/RAM annotations shown after each type name in the menu.
+# Every type in INSTANCE_GROUP_TYPES must have a matching entry here.
+declare -A INSTANCE_TYPE_SPECS=(
+    ["m7i.large"]="2 vCPU, 8 GB"
+    ["m7i.xlarge"]="4 vCPU, 16 GB"
+    ["m7i.2xlarge"]="8 vCPU, 32 GB"
+    ["m7i.4xlarge"]="16 vCPU, 64 GB"
+    ["m7i.8xlarge"]="32 vCPU, 128 GB"
+    ["c7i.large"]="2 vCPU, 4 GB"
+    ["c7i.xlarge"]="4 vCPU, 8 GB"
+    ["c7i.2xlarge"]="8 vCPU, 16 GB"
+    ["c7i.4xlarge"]="16 vCPU, 32 GB"
+    ["c7i.8xlarge"]="32 vCPU, 64 GB"
+    ["c6i.xlarge"]="4 vCPU, 8 GB"
+    ["c6i.2xlarge"]="8 vCPU, 16 GB"
+    ["c6i.4xlarge"]="16 vCPU, 32 GB"
+    ["c6i.8xlarge"]="32 vCPU, 64 GB"
+    ["c5.xlarge"]="4 vCPU, 8 GB"
+    ["c5.2xlarge"]="8 vCPU, 16 GB"
+    ["c5.4xlarge"]="16 vCPU, 32 GB"
+    ["c5.9xlarge"]="36 vCPU, 72 GB"
+    ["r7i.large"]="2 vCPU, 16 GB"
+    ["r7i.xlarge"]="4 vCPU, 32 GB"
+    ["r7i.2xlarge"]="8 vCPU, 64 GB"
+    ["r7i.4xlarge"]="16 vCPU, 128 GB"
+    ["t3.nano"]="2 vCPU, 0.5 GB"
+    ["t3.micro"]="2 vCPU, 1 GB"
+    ["t3.small"]="2 vCPU, 2 GB"
+    ["t3.medium"]="2 vCPU, 4 GB"
+    ["t3.large"]="2 vCPU, 8 GB"
+    ["t3.xlarge"]="4 vCPU, 16 GB"
+    ["t3.2xlarge"]="8 vCPU, 32 GB"
 )
 DEFAULT_INSTANCE_TYPE="c7i.4xlarge"
 
@@ -1115,57 +1155,107 @@ get_directory_name() {
     return 0
 }
 
-# Function to get instance type selection
+# Function to get instance type selection (two-level: group, then type)
 get_instance_type() {
+    local num_groups=${#INSTANCE_GROUP_ORDER[@]}
+
+    # Group-selection loop
     while true; do
         echo
         echo -e "${YELLOW}Select Instance Type:${NC}"
         echo
-        echo -e "${CYAN}Compute-Optimized Instances:${NC}"
+        echo -e "${CYAN}Instance Type Groups:${NC}"
         echo
-        echo -e "  ${GREEN}C7i Generation (Latest):${NC}"
-        echo -e "    ${GREEN}[1]${NC}  c7i.xlarge    (4 vCPU, 8 GB)"
-        echo -e "    ${GREEN}[2]${NC}  c7i.2xlarge   (8 vCPU, 16 GB)"
-        echo -e "    ${GREEN}[3]${NC}  c7i.4xlarge   (16 vCPU, 32 GB) ${PURPLE}[default]${NC}"
-        echo -e "    ${GREEN}[4]${NC}  c7i.8xlarge   (32 vCPU, 64 GB)"
-        echo
-        echo -e "  ${GREEN}C6i Generation:${NC}"
-        echo -e "    ${GREEN}[5]${NC}  c6i.xlarge    (4 vCPU, 8 GB)"
-        echo -e "    ${GREEN}[6]${NC}  c6i.2xlarge   (8 vCPU, 16 GB)"
-        echo -e "    ${GREEN}[7]${NC}  c6i.4xlarge   (16 vCPU, 32 GB)"
-        echo -e "    ${GREEN}[8]${NC}  c6i.8xlarge   (32 vCPU, 64 GB)"
-        echo
-        echo -e "  ${GREEN}C5 Generation:${NC}"
-        echo -e "    ${GREEN}[9]${NC}  c5.xlarge     (4 vCPU, 8 GB)"
-        echo -e "    ${GREEN}[10]${NC} c5.2xlarge   (8 vCPU, 16 GB)"
-        echo -e "    ${GREEN}[11]${NC} c5.4xlarge    (16 vCPU, 32 GB)"
-        echo -e "    ${GREEN}[12]${NC} c5.9xlarge   (36 vCPU, 72 GB)"
+        local gi
+        for ((gi = 0; gi < num_groups; gi++)); do
+            local group="${INSTANCE_GROUP_ORDER[$gi]}"
+            local caveat="${INSTANCE_GROUP_CAVEATS[$group]:-}"
+            if [[ -n "$caveat" ]]; then
+                echo -e "  ${GREEN}[$((gi + 1))]${NC} ${group} ${PURPLE}(${caveat})${NC}"
+            else
+                echo -e "  ${GREEN}[$((gi + 1))]${NC} ${group}"
+            fi
+        done
         echo
         echo -e "  ${GREEN}[q]${NC} Quit"
         echo
-        echo -n -e "${YELLOW}Select instance type [1-12/q] or press Enter for default (${DEFAULT_INSTANCE_TYPE}): ${NC}"
-        read -r choice
+        echo -n -e "${YELLOW}Select group [1-${num_groups}/q] or press Enter for default (${DEFAULT_INSTANCE_TYPE}): ${NC}"
+        read -r group_choice
 
-        # Default to c7i.4xlarge if empty
-        if [[ -z "$choice" ]]; then
+        # Default: Enter selects Compute Optimized and its default type
+        if [[ -z "$group_choice" ]]; then
             SELECTED_INSTANCE_TYPE="$DEFAULT_INSTANCE_TYPE"
             return 0
         fi
 
         # Check for quit option
-        if [[ "$choice" == "q" || "$choice" == "Q" ]]; then
+        if [[ "$group_choice" == "q" || "$group_choice" == "Q" ]]; then
             echo -e "${YELLOW}👋 Goodbye!${NC}"
             exit 0
         fi
 
-        # Validate choice
-        if [[ -n "${INSTANCE_TYPES[$choice]}" ]]; then
-            SELECTED_INSTANCE_TYPE="${INSTANCE_TYPES[$choice]}"
-            return 0
-        else
-            echo -e "${RED}❌ Invalid selection. Please choose 1-12 or q.${NC}"
+        # Validate group choice (numeric, within range)
+        if ! [[ "$group_choice" =~ ^[0-9]+$ ]] || (( group_choice < 1 || group_choice > num_groups )); then
+            echo -e "${RED}❌ Invalid selection. Please choose 1-${num_groups} or q.${NC}"
             echo
+            continue
         fi
+
+        local group="${INSTANCE_GROUP_ORDER[$((group_choice - 1))]}"
+        local -a types=()
+        read -r -a types <<< "${INSTANCE_GROUP_TYPES[$group]}"
+        local num_types=${#types[@]}
+
+        # Type-selection loop for the chosen group
+        while true; do
+            echo
+            echo -e "${CYAN}${group} Instances:${NC}"
+            local caveat="${INSTANCE_GROUP_CAVEATS[$group]:-}"
+            if [[ -n "$caveat" ]]; then
+                echo -e "  ${PURPLE}${caveat}${NC}"
+            fi
+            echo
+            local ti
+            for ((ti = 0; ti < num_types; ti++)); do
+                local type="${types[$ti]}"
+                local spec="${INSTANCE_TYPE_SPECS[$type]:-}"
+                local idx
+                idx=$(printf '%2d' "$((ti + 1))")
+                local padded
+                padded=$(printf '%-12s' "$type")
+                if [[ "$type" == "$DEFAULT_INSTANCE_TYPE" ]]; then
+                    echo -e "    ${GREEN}[${idx}]${NC} ${padded} (${spec}) ${PURPLE}[default]${NC}"
+                else
+                    echo -e "    ${GREEN}[${idx}]${NC} ${padded} (${spec})"
+                fi
+            done
+            echo
+            echo -e "  ${GREEN}[b]${NC} Back to groups"
+            echo -e "  ${GREEN}[q]${NC} Quit"
+            echo
+            echo -n -e "${YELLOW}Select instance type [1-${num_types}/b/q]: ${NC}"
+            read -r type_choice
+
+            # Check for quit option
+            if [[ "$type_choice" == "q" || "$type_choice" == "Q" ]]; then
+                echo -e "${YELLOW}👋 Goodbye!${NC}"
+                exit 0
+            fi
+
+            # Back to the group list
+            if [[ "$type_choice" == "b" || "$type_choice" == "B" ]]; then
+                break
+            fi
+
+            # Validate type choice (numeric, within range)
+            if ! [[ "$type_choice" =~ ^[0-9]+$ ]] || (( type_choice < 1 || type_choice > num_types )); then
+                echo -e "${RED}❌ Invalid selection. Please choose 1-${num_types}, b, or q.${NC}"
+                continue
+            fi
+
+            SELECTED_INSTANCE_TYPE="${types[$((type_choice - 1))]}"
+            return 0
+        done
     done
 }
 
