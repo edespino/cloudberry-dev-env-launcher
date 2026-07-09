@@ -8,7 +8,7 @@ This repository provides Terraform modules and configurations to deploy scalable
 
 ## Features
 
-- **Interactive OS Selection**: Choose from 15+ operating systems with guided setup and grouped display
+- **Interactive OS Selection**: Config-driven OS options with guided setup and grouped display
 - **DBaaS Platform Module**: Optional EKS + S3 infrastructure for database-as-a-service deployment
 - **Custom Cloudberry AMIs**: Pre-configured images from Synx Data Labs with build dependencies
 - **Simple Setup**: Local state files by default - no S3/DynamoDB required
@@ -82,7 +82,7 @@ Before getting started, ensure you have the required tools and AWS configuration
    ./bin/os-selector
 
    # Follow prompts to:
-   #  1. Select OS (15+ options)
+   #  1. Select OS (options defined in config/os-config-*.yaml)
    #  2. Choose subdirectory (optional, single-level only)
    #  3. Choose directory name
    #  4. Select instance type (C7i/C6i/C5)
@@ -152,7 +152,7 @@ Interactive tool for creating new environments with your preferred operating sys
 ```
 
 **Features:**
-- Choose from 8+ supported operating systems
+- Config-driven OS options (defined in `config/os-config-*.yaml`, see [config/README.md](config/README.md))
 - Optional subdirectory organization (single-level)
 - Interactive instance type selection (C7i, C6i, C5 generations)
 - Spot instance vs on-demand configuration

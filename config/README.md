@@ -1,14 +1,39 @@
 # OS Selector Configuration
 
-This directory contains the OS configuration for the `os-selector` script. The configuration supports both YAML (recommended) and Bash formats for maximum flexibility.
+This directory contains the OS configuration for the `os-selector` script. Configuration is defined in YAML files parsed with `yq`.
 
-## Configuration Formats
+## Configuration Loading
 
-### YAML Format (Recommended)
+The script loads **all** files matching `config/os-config-*.yaml`:
 
-**File**: `os-config.yaml`
+1. Matching files are sorted alphabetically for a consistent loading order
+2. Each file's `os_options` entries are merged into the combined option set
+3. If no matching files exist, the script exits with an error
+4. If the same group name appears in more than one file, the script exits with a duplicate-group error
 
-Clean, structured format using descriptive keys with grouping support:
+**Requirements**: `yq` command must be installed (`brew install yq`). There is no bash-format fallback — YAML is the only supported format.
+
+Set `DEBUG=1` to see which files are loaded and how many options/groups result:
+
+```bash
+DEBUG=1 ./bin/os-selector
+```
+
+## File Naming
+
+Only files named `os-config-*.yaml` are loaded. This makes it easy to split configuration across multiple files:
+
+```
+config/
+├── os-config-base.yaml       # Loaded
+├── os-config-custom.yaml     # Loaded (if you create it)
+├── os-config.yaml.example-extended   # NOT loaded (doesn't match pattern)
+└── os-config.sh.example      # NOT loaded (legacy example only)
+```
+
+To add your own options without editing the base file, create a new file such as `config/os-config-custom.yaml` with its own `os_options` section and distinct group names.
+
+## Configuration Format
 
 ```yaml
 os_options:
@@ -20,14 +45,6 @@ os_options:
     username: "ec2-user"
     dir_name: "amazon-linux-2023"
 
-  centos-stream:
-    name: "CentOS Stream 9"
-    group: "Base AMIs"
-    ami_owner: "125523088429"
-    ami_filter: "CentOS-Stream-ec2-9-*x86_64*"
-    username: "centos"
-    dir_name: "centos-stream-9"
-
   cbdb-build-rocky9:
     name: "Rocky Linux 9 - Cloudberry build"
     group: "Cloudberry Packer custom AMIs"
@@ -37,102 +54,12 @@ os_options:
     dir_name: "rl9-cbdb-build"
 ```
 
-**Requirements**: `yq` command must be installed (`brew install yq`)
-
-### Bash Format (Legacy)
-
-**File**: `os-config.sh`
-
-Traditional bash associative arrays with descriptive keys:
-
-```bash
-OS_OPTIONS=(
-    ["aws-amazon"]="Amazon Linux 2023"
-    ["centos-stream"]="CentOS Stream 9"
-)
-AMI_OWNERS=(
-    ["aws-amazon"]="137112412989"
-    ["centos-stream"]="125523088429"
-)
-# ... other arrays
-```
-
-## Configuration Loading Priority
-
-The script loads only ONE config file with this priority:
-
-1. **YAML first**: `config/os-config.yaml` (recommended)
-2. **Bash second**: `config/os-config.sh` (legacy)
-3. **Error**: Exit with helpful message if none found
-
-**⚠️ Multiple Config Warning**: If both config files exist, the script will warn you and use YAML. This prevents conflicts and confusion.
-
-## Three Ways to Customize
-
-### 1. EXTEND Defaults (Add New Options)
-
-**YAML:**
-```yaml
-os_options:
-  # ... existing defaults ...
-  fedora39:
-    name: "Fedora 39"
-    group: "Base AMIs"
-    ami_owner: "125523088429"
-    ami_filter: "Fedora-Cloud-Base-39-*-gp3-hvm-x86_64-*"
-    username: "fedora"
-    dir_name: "fedora-39"
-```
-
-**Bash:**
-```bash
-# Add to existing arrays
-OS_OPTIONS["9"]="Fedora 39"
-AMI_OWNERS["9"]="125523088429"
-# ... etc
-```
-
-### 2. MODIFY Specific Options
-
-**YAML:**
-```yaml
-os_options:
-  al2023-base:
-    name: "Amazon Linux 2023 (Custom)"
-    group: "Base AMIs"
-    ami_owner: "137112412989"
-    ami_filter: "al2023-ami-minimal-2023.6.*-kernel-6.12-x86_64"
-    username: "ec2-user"
-    dir_name: "amazon-linux-2023-custom"
-```
-
-**Bash:**
-```bash
-OS_OPTIONS["1"]="Amazon Linux 2023 (Custom)"
-AMI_FILTERS["1"]="al2023-ami-minimal-2023.6.*-kernel-6.12-x86_64"
-```
-
-### 3. COMPLETELY OVERRIDE All Defaults
-
-**YAML:** Simply replace the entire `os_options` section
-**Bash:** Use `unset` then redefine arrays
-
-## Example Files Provided
-
-| File | Description | Status |
-|------|-------------|---------|
-| `os-config.yaml` | Default configuration (8 OS options, descriptive keys) | **Active** |
-| `os-config.yaml.example-extended` | Extended set (12 OS options, descriptive keys) | Example |
-| `os-config.sh.example` | Bash format with descriptive keys | Example |
-
-**Note**: Only `os-config.yaml` is active by default. Example files need to be copied/renamed to become active.
-
 ## Key Naming
 
 You can use any key names in your configuration files:
 
 - **Numeric keys**: `"1"`, `"2"`, `"3"` (traditional, still supported)
-- **Descriptive keys**: `amazon`, `rocky9`, `ubuntu-lts` (recommended for clarity)  
+- **Descriptive keys**: `amazon`, `rocky9`, `ubuntu-lts` (recommended for clarity)
 - **Mixed approach**: Combine both as needed
 
 **User Experience**: Regardless of key names, users always select options by number (1, 2, 3...) in the interactive menu.
@@ -145,7 +72,7 @@ You can use any key names in your configuration files:
 
 ## Required Fields
 
-Each OS option must have all six fields:
+Each OS option must have all six fields. The script validates every field at load time and exits with an error naming the config file and key if any field is missing, empty, or `null`:
 
 - **`name`**: Display name shown in menu
 - **`group`**: Group name for organizing options in the display (e.g., "Base AMIs", "Cloudberry Packer custom AMIs")
@@ -176,6 +103,8 @@ Base AMIs:
 - Groups appear in order of first occurrence
 - Flexible - you can define any group names
 
+**Note**: A group name may only be defined in one config file. Duplicate group names across files cause the script to exit with an error, so each additional config file should use its own group names.
+
 ### Cloudberry Packer Custom AMIs
 
 The "Cloudberry Packer custom AMIs" group contains pre-configured development images provided by **Synx Data Labs** (AWS Account ID: `703671893074`) in the **us-west-2** region. These images include:
@@ -185,21 +114,7 @@ The "Cloudberry Packer custom AMIs" group contains pre-configured development im
 
 **Note**: Access to these custom AMIs requires appropriate AWS permissions to the Synx Data Labs account.
 
-## Alternative Configuration Files
-
-Set environment variables to use different files:
-
-```bash
-# Use different YAML file
-export CUSTOM_CONFIG_YAML="/path/to/custom.yaml"
-
-# Use different Bash file  
-export CUSTOM_CONFIG_BASH="/path/to/custom.sh"
-
-./bin/os-selector
-```
-
-## Installing yq (for YAML support)
+## Installing yq
 
 ```bash
 # macOS
@@ -226,48 +141,27 @@ sudo yum install yq     # CentOS/RHEL/Rocky
 After modifying any config file:
 
 ```bash
-./bin/os-selector
+DEBUG=1 ./bin/os-selector
 ```
 
-You'll see which format was loaded and available options.
-
+You'll see which files were loaded and the available options.
 
 ## Best Practices
 
-1. **Use YAML format** for new configurations (cleaner syntax)
-2. **Keep only one active config** to avoid conflicts
+1. **Split custom options into their own `os-config-*.yaml` file** instead of editing the base file
+2. **Use distinct group names per file** to avoid duplicate-group errors
 3. **Test AMI filters** before adding new options
 4. **Use descriptive keys** for better maintainability
 5. **Document custom changes** with comments
 6. **Backup configs** before major modifications
 
-## Avoiding Configuration Conflicts
-
-**Problem**: Multiple config files can cause confusion about which is being used.
-
-**Solution**: The script now:
-- **Warns you** if multiple config files exist
-- **Shows priority order**: YAML > JSON > Bash
-- **Uses only the highest priority** file found
-
-**Best Practice**: Keep only one active config file:
-```bash
-# Good: Only one active config
-ls config/
-├── os-config.yaml              # Active
-├── os-config.json.example      # Example only
-└── os-config.sh.example        # Example only
-
-# Avoid: Multiple active configs
-├── os-config.yaml    # ⚠️ Both active - causes warning
-├── os-config.sh      # ⚠️ Both active - causes warning
-```
-
 ## Troubleshooting
 
-- **yq not found**: Install yq or use bash format fallback
-- **YAML syntax error**: Validate with `yq eval . config.yaml`
-- **Options not appearing**: Check all required fields present
+- **yq not found**: Install yq (`brew install yq`)
+- **No configuration files found**: Ensure at least one `config/os-config-*.yaml` file exists
+- **Missing required field error**: The named key in the named file is missing one of the six required fields
+- **Duplicate group name error**: The same `group` value appears in two config files - rename one
+- **YAML syntax error**: Validate with `yq eval . config/os-config-base.yaml`
 - **AMI not found**: Test filter with AWS CLI
 - **SSH fails**: Verify username matches AMI default
 
@@ -275,12 +169,8 @@ ls config/
 
 ```
 config/
-├── README.md                              # This documentation
-├── os-config.yaml                         # YAML config (recommended)
-├── os-config.yaml.example-minimal         # Minimal YAML example
-├── os-config.yaml.example-extended        # Extended YAML example
-├── os-config.sh                          # Bash config (fallback)
-└── os-config.sh.example-complete-override # Bash override example
+├── README.md                          # This documentation
+├── os-config-base.yaml                # Base configuration (loaded)
+├── os-config.yaml.example-extended    # Extended YAML example (not loaded)
+└── os-config.sh.example               # Legacy bash example (not loaded)
 ```
-
-The configuration system now supports both modern YAML format and traditional bash, with automatic fallback for maximum compatibility.
