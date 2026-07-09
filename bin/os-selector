@@ -47,6 +47,24 @@ declare -A INSTANCE_TYPES=(
 )
 DEFAULT_INSTANCE_TYPE="c7i.4xlarge"
 
+# Read a required field for an OS option from a YAML config file.
+# Fails loudly if yq errors or the field is missing/null/empty.
+read_required_field() {
+    local config_file="$1"
+    local key="$2"
+    local field="$3"
+    local value
+    if ! value=$(yq eval ".os_options[\"$key\"].$field" "$config_file"); then
+        echo -e "${RED}❌ Error: yq failed to read '.os_options.$key.$field' from $config_file${NC}" >&2
+        return 1
+    fi
+    if [[ -z "$value" || "$value" == "null" ]]; then
+        echo -e "${RED}❌ Error: Missing required field '$field' for os_options.$key in $config_file${NC}" >&2
+        return 1
+    fi
+    printf '%s\n' "$value"
+}
+
 # Function to load all YAML configurations matching pattern
 load_yaml_config() {
     local config_pattern="$REPO_ROOT/config/os-config-*.yaml"
@@ -84,25 +102,30 @@ load_yaml_config() {
         fi
 
         # Parse YAML and populate arrays
-        local keys=$(yq eval '.os_options | keys | .[]' "$config_file")
+        local keys
+        if ! keys=$(yq eval '.os_options | keys | .[]' "$config_file"); then
+            echo -e "${RED}❌ Error: yq failed to parse os_options keys from $config_file${NC}" >&2
+            exit 1
+        fi
 
         for key in $keys; do
             # Check for duplicate group names across config files
-            local group=$(yq eval ".os_options[\"$key\"].group" "$config_file")
-            if [[ -n "$group" && -n "${groups_seen[$group]}" && "${groups_seen[$group]}" != "$config_file" ]]; then
+            local group
+            group=$(read_required_field "$config_file" "$key" "group") || exit 1
+            if [[ -n "${groups_seen[$group]}" && "${groups_seen[$group]}" != "$config_file" ]]; then
                 echo -e "${RED}❌ Error: Duplicate group name '${group}' found${NC}"
                 echo -e "${YELLOW}   First defined in: ${groups_seen[$group]}${NC}"
                 echo -e "${YELLOW}   Also found in: $config_file${NC}"
                 exit 1
             fi
-            [[ -n "$group" ]] && groups_seen["$group"]="$config_file"
+            groups_seen["$group"]="$config_file"
 
-            OS_OPTIONS["$key"]=$(yq eval ".os_options[\"$key\"].name" "$config_file")
+            OS_OPTIONS["$key"]=$(read_required_field "$config_file" "$key" "name") || exit 1
             OS_GROUPS["$key"]="$group"
-            AMI_OWNERS["$key"]=$(yq eval ".os_options[\"$key\"].ami_owner" "$config_file")
-            AMI_FILTERS["$key"]=$(yq eval ".os_options[\"$key\"].ami_filter" "$config_file")
-            DEFAULT_USERNAMES["$key"]=$(yq eval ".os_options[\"$key\"].username" "$config_file")
-            DIR_NAMES["$key"]=$(yq eval ".os_options[\"$key\"].dir_name" "$config_file")
+            AMI_OWNERS["$key"]=$(read_required_field "$config_file" "$key" "ami_owner") || exit 1
+            AMI_FILTERS["$key"]=$(read_required_field "$config_file" "$key" "ami_filter") || exit 1
+            DEFAULT_USERNAMES["$key"]=$(read_required_field "$config_file" "$key" "username") || exit 1
+            DIR_NAMES["$key"]=$(read_required_field "$config_file" "$key" "dir_name") || exit 1
         done
     done
 
@@ -148,9 +171,11 @@ show_options() {
 
     # First, collect unique groups in order of appearance
     local -a group_order=()
+    local -A group_seen=()
     for key in "${keys[@]}"; do
         local group="${OS_GROUPS[$key]}"
-        if [[ -n "$group" ]] && [[ ! " ${group_order[@]} " =~ " ${group} " ]]; then
+        if [[ -n "$group" && -z "${group_seen[$group]}" ]]; then
+            group_seen["$group"]=1
             group_order+=("$group")
         fi
     done
@@ -223,6 +248,24 @@ show_configuration() {
     echo
 }
 
+# Replace a __PLACEHOLDER__ token in a file.
+# Fails loudly if the token is absent before substitution or still present after.
+replace_placeholder() {
+    local file="$1"
+    local placeholder="$2"
+    local value="$3"
+    if ! grep -qF "$placeholder" "$file"; then
+        echo -e "${RED}❌ Internal error: placeholder $placeholder not found in $file${NC}" >&2
+        exit 1
+    fi
+    sed -i.bak "s|$placeholder|$value|g" "$file"
+    rm -f "$file.bak"
+    if grep -qF "$placeholder" "$file"; then
+        echo -e "${RED}❌ Internal error: placeholder $placeholder still present in $file after substitution${NC}" >&2
+        exit 1
+    fi
+}
+
 # Function to create environment directory
 create_environment() {
     local selection=$1
@@ -250,6 +293,12 @@ create_environment() {
     fi
     target_dir="$target_dir/$target_name"
 
+    # Safety guard: never delete with an empty or invalid name component
+    if [[ -z "$target_name" || "$target_name" == "null" ]]; then
+        echo -e "${RED}❌ Internal error: invalid target directory name ('$target_name'); refusing to remove $target_dir${NC}" >&2
+        exit 1
+    fi
+
     # Remove existing directory if it exists (user was already warned earlier)
     if [[ -d "$target_dir" ]]; then
         rm -rf "$target_dir"
@@ -267,24 +316,28 @@ create_environment() {
         if [[ -n "$subdirectory" ]]; then
             envrc_path="environments/$subdirectory"
         fi
-        sed -i.bak "s|environments/[^/]*|$envrc_path/$target_name|g" "$envrc_file"
+        replace_placeholder "$envrc_file" "__ENV_PATH__" "$envrc_path/$target_name"
 
         # Replace instance type placeholder
-        sed -i.bak2 "s|__INSTANCE_TYPE__|$instance_type|g" "$envrc_file"
+        replace_placeholder "$envrc_file" "__INSTANCE_TYPE__" "$instance_type"
 
         # Replace spot instance placeholder
-        sed -i.bak3 "s|__USE_SPOT_INSTANCES__|$use_spot|g" "$envrc_file"
+        replace_placeholder "$envrc_file" "__USE_SPOT_INSTANCES__" "$use_spot"
 
         # Replace DBaaS platform placeholder
-        sed -i.bak4 "s|__DEPLOY_DBAAS_SERVICES__|$deploy_dbaas|g" "$envrc_file"
+        replace_placeholder "$envrc_file" "__DEPLOY_DBAAS_SERVICES__" "$deploy_dbaas"
 
         # Update env_prefix to include subdirectory to avoid collisions
         # Without subdirectory: ${USER}-rl9-cbdb-build
         # With subdirectory: ${USER}-cloudberry-rl9-cbdb-build
+        replace_placeholder "$envrc_file" "__ENV_PREFIX_SUBDIR__" "${subdirectory:+${subdirectory}-}"
+
+        # REPO_ROOT relative path depends on subdirectory depth
+        local envrc_cd_up="../.."
         if [[ -n "$subdirectory" ]]; then
-            sed -i.bak4 "s|export TF_VAR_env_prefix=\${USER}-\$CURRENT_DIR|export TF_VAR_env_prefix=\${USER}-${subdirectory}-\$CURRENT_DIR|g" "$envrc_file"
-            rm -f "$envrc_file.bak4"
+            envrc_cd_up="../../.."
         fi
+        replace_placeholder "$envrc_file" "__REPO_ROOT_RELPATH__" "$envrc_cd_up"
 
         # Replace the AMI configuration section with selected OS only
         # Use sed to replace the section between the markers
@@ -299,10 +352,6 @@ export TF_VAR_default_username="'"$username"'"\
         }' "$envrc_file"
 
         rm -f "$envrc_file.tmp"
-        rm -f "$envrc_file.bak"
-        rm -f "$envrc_file.bak2"
-        rm -f "$envrc_file.bak3"
-        rm -f "$envrc_file.bak4"
     fi
 
     # Update main.tf module path for subdirectories
@@ -311,13 +360,6 @@ export TF_VAR_default_username="'"$username"'"\
         # For subdirectories, need one more "../" to reach repo root
         sed -i.bak 's|source = "../../modules/|source = "../../../modules/|g' "$main_tf"
         rm -f "$main_tf.bak"
-    fi
-
-    # Update .envrc REPO_ROOT calculation for subdirectories
-    if [[ -f "$envrc_file" && -n "$subdirectory" ]]; then
-        # For subdirectories, need one more "../" to reach repo root
-        sed -i.bak5 's|REPO_ROOT="\$(cd \.\./\.\. &&|REPO_ROOT="\$(cd ../../.. \&\&|g' "$envrc_file"
-        rm -f "$envrc_file.bak5"
     fi
 
     # Create updated .env file
@@ -1178,7 +1220,7 @@ get_dbaas_platform() {
         echo -e "  ${CYAN}This enables database-as-a-service application deployment alongside your database cluster.${NC}"
         echo
         echo -e "  ${GREEN}[1]${NC} No - Database cluster only ${PURPLE}(default, lower cost)${NC}"
-        echo -e "  ${GREEN}[2]${NC} Yes - Deploy full DBaaS platform ${PURPLE}(EKS + S3 + ~$250/month)${NC}"
+        echo -e "  ${GREEN}[2]${NC} Yes - Deploy full DBaaS platform ${PURPLE}(EKS + S3 + ~\$250/month)${NC}"
         echo -e "  ${GREEN}[q]${NC} Quit"
         echo
         echo -n -e "${YELLOW}Select option [1/2/q] or press Enter for default (No): ${NC}"
