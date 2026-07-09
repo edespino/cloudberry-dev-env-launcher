@@ -1,0 +1,17 @@
+# DBaaS Platform
+deploy_dbaas_services = true
+
+# Cloudflare Zone ID (get from dashboard: dash.cloudflare.com)
+# PLACEHOLDER: Will be prompted during os-selector
+cloudflare_zone_id = "__CLOUDFLARE_ZONE_ID__"
+
+# Set Cloudflare API token via environment variable:
+# export TF_VAR_cloudflare_api_token="your-token-here"
+
+# Optional overrides (defaults: ALB enabled, auto-generated domain, HTTP-only):
+# enable_alb_ingress       = false
+# dbaas_domain_name        = "custom.synxdata.com"  # Full custom domain
+# domain_prefix            = "myapp"                 # Change prefix only (myapp-{env}.synxdata.com)
+# domain_suffix            = "example.com"           # Change suffix only (synxdb-{env}.example.com)
+# cloudflare_proxy_enabled = true
+# enable_ssl_redirect      = true

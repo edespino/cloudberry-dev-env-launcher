@@ -14,6 +14,11 @@ output "eks_cluster_endpoint" {
   value       = aws_eks_cluster.dbaas_cluster.endpoint
 }
 
+output "eks_cluster_certificate_authority_data" {
+  description = "Base64 encoded certificate data for EKS cluster"
+  value       = aws_eks_cluster.dbaas_cluster.certificate_authority[0].data
+}
+
 output "eks_cluster_arn" {
   description = "ARN of the EKS cluster"
   value       = aws_eks_cluster.dbaas_cluster.arn
@@ -97,6 +102,16 @@ output "eks_node_role_arn" {
 }
 
 # Networking Outputs
+output "eks_public_subnet_ids" {
+  description = "IDs of the public subnets for ALB"
+  value       = aws_subnet.eks_public[*].id
+}
+
+output "eks_public_subnet_cidrs" {
+  description = "CIDR blocks of the public subnets"
+  value       = aws_subnet.eks_public[*].cidr_block
+}
+
 output "eks_private_subnet_ids" {
   description = "IDs of the private subnets used by EKS"
   value       = aws_subnet.eks_private[*].id
@@ -218,6 +233,47 @@ output "rds_secrets_manager_name" {
   value       = aws_secretsmanager_secret.dbaas_rds_credentials.name
 }
 
+# ALB and Ingress Outputs
+output "alb_dns_name" {
+  description = "DNS name of the Application Load Balancer"
+  value       = local.alb_hostname
+}
+
+output "alb_ingress_namespace" {
+  description = "Namespace where ALB Ingress is deployed"
+  value       = var.enable_alb_ingress ? var.dbaas_namespace : ""
+}
+
+output "dbaas_ui_url_http" {
+  description = "HTTP URL for DBaaS UI"
+  value       = var.enable_alb_ingress ? "http://${local.domain_name}/ops/" : ""
+}
+
+output "dbaas_ui_url_https" {
+  description = "HTTPS URL for DBaaS UI (if Cloudflare proxy is enabled)"
+  value       = var.enable_alb_ingress && var.cloudflare_proxy_enabled ? "https://${local.domain_name}/ops/" : ""
+}
+
+output "dbaas_console_url_http" {
+  description = "HTTP URL for DBaaS Console"
+  value       = var.enable_alb_ingress ? "http://${local.domain_name}/console/" : ""
+}
+
+output "dbaas_console_url_https" {
+  description = "HTTPS URL for DBaaS Console (if Cloudflare proxy is enabled)"
+  value       = var.enable_alb_ingress && var.cloudflare_proxy_enabled ? "https://${local.domain_name}/console/" : ""
+}
+
+output "cloudflare_dns_records" {
+  description = "Cloudflare DNS records created for DBaaS UI"
+  value = var.enable_alb_ingress && var.enable_cloudflare_dns ? [{
+    name    = local.domain_name
+    type    = "CNAME"
+    value   = local.alb_hostname
+    proxied = var.cloudflare_proxy_enabled
+  }] : []
+}
+
 # Summary Output
 output "dbaas_platform_summary" {
   description = "Summary of all DBaaS platform resources"
@@ -253,5 +309,12 @@ output "dbaas_platform_summary" {
       name       = var.service_account_name
       annotation = "eks.amazonaws.com/role-arn=${aws_iam_role.dbaas_s3_access.arn}"
     }
+    external_access = var.enable_alb_ingress ? {
+      alb_dns_name     = local.alb_hostname
+      domain_name      = local.domain_name
+      ui_url           = var.cloudflare_proxy_enabled ? "https://${local.domain_name}/ops/" : "http://${local.domain_name}/ops/"
+      console_url      = var.cloudflare_proxy_enabled ? "https://${local.domain_name}/console/" : "http://${local.domain_name}/console/"
+      cloudflare_proxy = var.cloudflare_proxy_enabled
+    } : null
   }
 }

@@ -72,3 +72,14 @@ environments/*/
 !environments/TEMPLATE-README.md
 !environments/AUTO-SPOT-CHECK.md
 !environments/multi-os-sample/
+# SynxData Labs internal content - never commit
+*synx*
+AWS-MARKETPLACE-CONTEXT.md
+
+# DBaaS live-deployment artifacts - contain secrets/internal infra, never commit
+modules/aws/dbaas-platform/helm-config/*values*.yaml
+**/DEPLOYMENT-STATUS*.md
+
+# polly orchestration
+.worktrees/
+.polly/

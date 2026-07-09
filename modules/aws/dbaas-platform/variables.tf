@@ -19,6 +19,11 @@ variable "public_subnet_id" {
   type        = string
 }
 
+variable "internet_gateway_id" {
+  description = "Internet Gateway ID from database cluster module"
+  type        = string
+}
+
 variable "availability_zones" {
   description = "List of availability zones to use for EKS subnets"
   type        = list(string)
@@ -118,13 +123,14 @@ variable "create_iam_user" {
 variable "rds_engine_version" {
   description = "PostgreSQL engine version for RDS"
   type        = string
-  default     = "16.10"
+  default     = "16.11"
 }
 
 variable "rds_instance_class" {
   description = "Instance class for RDS database"
   type        = string
-  default     = "db.t3.medium"
+##  default     = "db.t3.medium"
+  default     = "db.t3.micro"
 }
 
 variable "rds_allocated_storage" {
@@ -221,4 +227,111 @@ variable "rds_max_connections" {
   description = "Maximum number of database connections"
   type        = string
   default     = "200"
+}
+
+# External Access Configuration
+variable "enable_alb_ingress" {
+  description = "Enable ALB with AWS Load Balancer Controller for external access to DBaaS UI"
+  type        = bool
+  default     = true
+}
+
+variable "dbaas_namespace" {
+  description = "Kubernetes namespace where DBaaS application is deployed"
+  type        = string
+  default     = "dbaas"
+}
+
+variable "dbaas_service_name" {
+  description = "Kubernetes service name for DBaaS application"
+  type        = string
+  default     = "dbaas-integration"
+}
+
+variable "dbaas_service_port" {
+  description = "Port number for DBaaS application service"
+  type        = number
+  default     = 8030
+}
+
+# Domain and DNS Configuration
+variable "dbaas_domain_name" {
+  description = "Domain name for DBaaS UI (e.g., synxdb-elastic.synxdata.com). If empty, auto-generates using domain_prefix and env_prefix"
+  type        = string
+  default     = ""
+}
+
+variable "domain_prefix" {
+  description = "Prefix for auto-generated domain name (e.g., 'synxdb' creates synxdb-{env_prefix}.synxdata.com)"
+  type        = string
+  default     = "synxdb"
+}
+
+variable "domain_suffix" {
+  description = "Suffix for auto-generated domain name"
+  type        = string
+  default     = "synxdata.com"
+}
+
+# SSL/TLS Configuration
+variable "enable_tls" {
+  description = "Enable TLS/SSL for ingress"
+  type        = bool
+  default     = false
+}
+
+variable "enable_ssl_redirect" {
+  description = "Force SSL redirect (HTTP to HTTPS)"
+  type        = bool
+  default     = false
+}
+
+variable "tls_secret_name" {
+  description = "Name of Kubernetes secret containing TLS certificate"
+  type        = string
+  default     = "dbaas-tls-secret"
+}
+
+# Cloudflare Configuration
+variable "cloudflare_api_token" {
+  description = "Cloudflare API token for DNS management"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "cloudflare_zone_id" {
+  description = "Cloudflare Zone ID for DNS records"
+  type        = string
+  default     = ""
+}
+
+variable "enable_cloudflare_dns" {
+  description = "Enable automatic Cloudflare DNS record creation"
+  type        = bool
+  default     = true
+}
+
+variable "cloudflare_proxy_enabled" {
+  description = "Enable Cloudflare proxy (orange cloud) for SSL and DDoS protection"
+  type        = bool
+  default     = false
+}
+
+variable "cloudflare_dns_ttl" {
+  description = "TTL for Cloudflare DNS records (1 = auto, must be 1 if proxied)"
+  type        = number
+  default     = 1
+}
+
+variable "enable_cloudflare_firewall" {
+  description = "Enable Cloudflare firewall rules for IP-based access control"
+  type        = bool
+  default     = false
+}
+
+variable "cloudflare_allowed_ips" {
+  description = "List of IP addresses/CIDRs allowed through Cloudflare firewall"
+  type        = list(string)
+  default     = []
 }

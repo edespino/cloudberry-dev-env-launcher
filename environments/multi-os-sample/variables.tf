@@ -172,3 +172,60 @@ variable "s3_lifecycle_days" {
   type        = number
   default     = 30
 }
+
+# Cloudflare Configuration
+variable "cloudflare_api_token" {
+  description = "Cloudflare API token for DNS management (set via TF_VAR_cloudflare_api_token env var)"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+# External Access Configuration (pass through to dbaas_platform module)
+variable "enable_alb_ingress" {
+  description = "Enable ALB with AWS Load Balancer Controller for external access to DBaaS UI"
+  type        = bool
+  default     = true
+}
+
+variable "dbaas_domain_name" {
+  description = "Domain name for DBaaS UI (if empty, auto-generates using domain_prefix and env_prefix)"
+  type        = string
+  default     = ""
+}
+
+variable "domain_prefix" {
+  description = "Prefix for auto-generated domain name"
+  type        = string
+  default     = "synxdb"
+}
+
+variable "domain_suffix" {
+  description = "Suffix for auto-generated domain name"
+  type        = string
+  default     = "synxdata.com"
+}
+
+variable "enable_cloudflare_dns" {
+  description = "Enable automatic Cloudflare DNS record creation"
+  type        = bool
+  default     = true
+}
+
+variable "cloudflare_zone_id" {
+  description = "Cloudflare Zone ID for DNS records"
+  type        = string
+  default     = ""
+}
+
+variable "cloudflare_proxy_enabled" {
+  description = "Enable Cloudflare proxy (orange cloud)"
+  type        = bool
+  default     = false
+}
+
+variable "enable_ssl_redirect" {
+  description = "Force SSL redirect (HTTP to HTTPS)"
+  type        = bool
+  default     = false
+}

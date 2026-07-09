@@ -25,6 +25,11 @@ output "subnet_id" {
   value       = aws_subnet.public.id
 }
 
+output "internet_gateway_id" {
+  description = "Internet Gateway ID"
+  value       = aws_internet_gateway.main.id
+}
+
 output "instance_ids" {
   description = "EC2 instance IDs"
   value       = aws_instance.database_instances[*].id
@@ -59,6 +64,11 @@ output "data_volumes" {
     volume_type          = "none"
     total_volumes        = 0
   }
+}
+
+output "iam_role_name" {
+  description = "IAM role name for the EC2 instances"
+  value       = aws_iam_role.ec2_cluster_discovery.name
 }
 
 output "volume_attachments" {

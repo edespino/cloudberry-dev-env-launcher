@@ -477,6 +477,9 @@ alias lssh='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username
 alias lssh1='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\$(get_instance_ip 1) -A'
 alias lssh2='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\$(get_instance_ip 2) -A'
 
+# Port forward for omnigent (local 6767 -> remote 127.0.0.1:6767)
+alias log='echo "omnigent: http://127.0.0.1:6767" && ssh "\${SSH_OPTS[@]}" -L 6767:127.0.0.1:6767 -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\$(get_instance_ip 0) -A'
+
 # Create cbadmin aliases (backward compatible: lcssh, lcw, lccopyto, etc.)
 create_user_ssh_aliases "cbadmin" "lc" "lcw"
 
@@ -663,18 +666,93 @@ ios() {
 # Terraform init aliases
 alias ti='terraform init'      # Local backend (uses backend.tf config)
 EOF
-    
+
     # No need to modify main.tf - template now uses generic names
-    
+
+    # Handle DBaaS-specific files if deploying DBaaS services
+    if [[ "$deploy_dbaas" == "true" ]]; then
+        echo -e "${BLUE}🚀 Setting up DBaaS platform files...${NC}"
+
+        # Copy terraform.tfvars template
+        if [[ -f "$TEMPLATE_DIR/terraform.tfvars.dbaas-template" ]]; then
+            local tfvars_file="$target_dir/terraform.tfvars"
+            cp "$TEMPLATE_DIR/terraform.tfvars.dbaas-template" "$tfvars_file"
+
+            # Prompt for Cloudflare Zone ID
+            echo
+            echo -e "${YELLOW}📝 Cloudflare Configuration:${NC}"
+            echo -e "   Get your Zone ID from: ${CYAN}https://dash.cloudflare.com${NC}"
+            echo -n -e "${YELLOW}   Enter Cloudflare Zone ID (or press Enter to skip): ${NC}"
+            read -r cloudflare_zone_id
+
+            if [[ -n "$cloudflare_zone_id" ]]; then
+                sed -i.bak "s|__CLOUDFLARE_ZONE_ID__|$cloudflare_zone_id|g" "$tfvars_file"
+                rm -f "$tfvars_file.bak"
+                echo -e "${GREEN}   ✅ Cloudflare Zone ID configured${NC}"
+            else
+                echo -e "${YELLOW}   ⚠️  Skipped - You can set this later in terraform.tfvars${NC}"
+            fi
+        fi
+
+        # Copy external access setup guide
+        if [[ -f "$TEMPLATE_DIR/EXTERNAL-ACCESS-SETUP.md.template" ]]; then
+            cp "$TEMPLATE_DIR/EXTERNAL-ACCESS-SETUP.md.template" "$target_dir/EXTERNAL-ACCESS-SETUP.md"
+            echo -e "${GREEN}   ✅ External access documentation copied${NC}"
+        fi
+
+        # Copy helm configuration files
+        local helm_config_source="$REPO_ROOT/modules/aws/dbaas-platform/helm-config"
+        if [[ -d "$helm_config_source" ]]; then
+            cp -r "$helm_config_source" "$target_dir/example"
+            echo -e "${GREEN}   ✅ Helm configuration files copied to example/${NC}"
+        else
+            echo -e "${YELLOW}   ⚠️  Helm config directory not found: $helm_config_source${NC}"
+        fi
+
+        # Copy DBaaS documentation
+        local docs_source="$REPO_ROOT/modules/aws/dbaas-platform/docs"
+        if [[ -d "$docs_source" ]]; then
+            cp -r "$docs_source" "$target_dir/docs"
+            echo -e "${GREEN}   ✅ DBaaS documentation copied to docs/${NC}"
+        else
+            echo -e "${YELLOW}   ⚠️  Docs directory not found: $docs_source${NC}"
+        fi
+
+        # NOTE: DBaaS platform module is now included in the multi-os-sample template
+        # with conditional count (count = var.deploy_dbaas_services ? 1 : 0)
+        # No need to append it here anymore - the module declaration is always present
+        echo -e "${GREEN}   ✅ DBaaS platform module already present in template${NC}"
+    fi
+
     echo -e "${GREEN}✨ Environment created successfully!${NC}"
     echo
     echo -e "${YELLOW}📁 Location:${NC} $target_dir"
     echo -e "${YELLOW}🔧 Next steps:${NC}"
     echo -e "  1. ${CYAN}cd $target_dir${NC}"
     echo -e "  2. ${CYAN}direnv allow .${NC}"
-    echo -e "  3. ${CYAN}terraform init${NC}"
-    echo -e "  4. ${CYAN}terraform plan${NC}"
-    echo -e "  5. ${CYAN}terraform apply${NC}"
+
+    if [[ "$deploy_dbaas" == "true" ]]; then
+        # Calculate expected env_prefix (matches .envrc logic)
+        local expected_env_prefix="${USER}"
+        if [[ -n "$subdirectory" ]]; then
+            expected_env_prefix="${expected_env_prefix}-${subdirectory}"
+        fi
+        expected_env_prefix="${expected_env_prefix}-${target_name}"
+
+        echo -e "  3. ${CYAN}export TF_VAR_cloudflare_api_token=\"your-api-token\"${NC} ${PURPLE}(required for external access)${NC}"
+        echo -e "  4. ${CYAN}terraform init${NC}"
+        echo -e "  5. ${CYAN}terraform plan${NC}"
+        echo -e "  6. ${CYAN}terraform apply${NC}"
+        echo
+        echo -e "${PURPLE}📚 DBaaS Platform:${NC}"
+        echo -e "   • External access enabled by default (ALB + Cloudflare DNS)"
+        echo -e "   • Auto-generated domain: ${CYAN}synxdb-${expected_env_prefix}.synxdata.com${NC}"
+        echo -e "   • See EXTERNAL-ACCESS-SETUP.md for configuration details"
+    else
+        echo -e "  3. ${CYAN}terraform init${NC}"
+        echo -e "  4. ${CYAN}terraform plan${NC}"
+        echo -e "  5. ${CYAN}terraform apply${NC}"
+    fi
     echo
 }
 

@@ -203,8 +203,9 @@ resource "aws_iam_role_policy_attachment" "rds_monitoring" {
 
 # Store RDS credentials in AWS Secrets Manager
 resource "aws_secretsmanager_secret" "dbaas_rds_credentials" {
-  name        = "${var.env_prefix}-dbaas-rds-credentials"
-  description = "Database credentials for DBaaS RDS PostgreSQL instance"
+  name                    = "${var.env_prefix}-dbaas-rds-credentials"
+  description             = "Database credentials for DBaaS RDS PostgreSQL instance"
+  recovery_window_in_days = 0  # Force immediate deletion to avoid conflicts on recreate
 
   tags = merge(local.module_tags, {
     Name    = "${var.env_prefix}-dbaas-rds-credentials"

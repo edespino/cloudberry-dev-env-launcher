@@ -6,11 +6,43 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    cloudflare = {
+      source  = "cloudflare/cloudflare"
+      version = "~> 4.0"
+    }
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = "~> 2.0"
+    }
   }
 }
 
 provider "aws" {
   region = var.region
+}
+
+# Cloudflare provider for DNS management
+provider "cloudflare" {
+  api_token = var.cloudflare_api_token
+}
+
+# Kubernetes provider for querying EKS resources
+provider "kubernetes" {
+  host                   = var.deploy_dbaas_services ? module.dbaas_platform[0].eks_cluster_endpoint : ""
+  cluster_ca_certificate = var.deploy_dbaas_services ? base64decode(module.dbaas_platform[0].eks_cluster_certificate_authority_data) : ""
+
+  exec {
+    api_version = "client.authentication.k8s.io/v1beta1"
+    command     = "aws"
+    args = var.deploy_dbaas_services ? [
+      "eks",
+      "get-token",
+      "--cluster-name",
+      module.dbaas_platform[0].eks_cluster_name,
+      "--region",
+      var.region
+    ] : []
+  }
 }
 
 # Use the database-cluster module
@@ -70,10 +102,11 @@ module "dbaas_platform" {
   source = "../../modules/aws/dbaas-platform"
 
   # Core Configuration (from database cluster)
-  region           = var.region
-  env_prefix       = var.env_prefix
-  vpc_id           = module.database_cluster.vpc_id
-  public_subnet_id = module.database_cluster.subnet_id
+  region               = var.region
+  env_prefix           = var.env_prefix
+  vpc_id               = module.database_cluster.vpc_id
+  public_subnet_id     = module.database_cluster.subnet_id
+  internet_gateway_id  = module.database_cluster.internet_gateway_id
 
   # EKS Configuration
   eks_cluster_version     = var.eks_cluster_version
@@ -85,6 +118,17 @@ module "dbaas_platform" {
   # S3 Configuration
   enable_s3_versioning = var.enable_s3_versioning
   s3_lifecycle_days    = var.s3_lifecycle_days
+
+  # External Access Configuration
+  enable_alb_ingress       = var.enable_alb_ingress
+  dbaas_domain_name        = var.dbaas_domain_name
+  domain_prefix            = var.domain_prefix
+  domain_suffix            = var.domain_suffix
+  enable_cloudflare_dns    = var.enable_cloudflare_dns
+  cloudflare_zone_id       = var.cloudflare_zone_id
+  cloudflare_api_token     = var.cloudflare_api_token
+  cloudflare_proxy_enabled = var.cloudflare_proxy_enabled
+  enable_ssl_redirect      = var.enable_ssl_redirect
 
   # Tags
   common_tags = {
