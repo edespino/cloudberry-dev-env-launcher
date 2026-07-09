@@ -1441,7 +1441,7 @@ confirm_creation() {
         echo
         echo -e "${YELLOW}Actions:${NC}"
         echo -e "  ${GREEN}[c]${NC} Create environment ${PURPLE}(default)${NC}"
-        echo -e "  ${GREEN}[b]${NC} Back to instance configuration"
+        echo -e "  ${GREEN}[b]${NC} Reconfigure (from node count)"
         echo -e "  ${GREEN}[o]${NC} Back to OS selection"
         echo -e "  ${GREEN}[q]${NC} Quit"
         echo
