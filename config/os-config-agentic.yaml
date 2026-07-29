@@ -1,0 +1,19 @@
+# Agentic-family OS configurations
+# Dedicated AI-tooling images from the cloudberry-image-factory agentic
+# family (Claude Code, opencode, omnigent, pi, herdr, beads, ai-toolchain).
+#
+# Naming: the image factory (2026-07 family restructure) publishes
+# agentic-packer-<os>-<timestamp>.
+
+os_options:
+  # ----------------------------------------------------------------------
+  # Agentic Packer custom AMIs
+  # ----------------------------------------------------------------------
+
+  ubuntu26-agentic:
+    name: "Ubuntu 26.04 - Agentic (AI tooling)"
+    group: "Agentic - Custom Packer AMIs"
+    ami_owner: "703671893074"
+    ami_filter: "agentic-packer-ubuntu26-*"
+    username: "ubuntu"
+    dir_name: "ubuntu26-agentic"
