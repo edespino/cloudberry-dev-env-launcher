@@ -12,6 +12,12 @@ os_options:
 ## ----------------------------------------------------------------------
 ## Cloudberry Packer custom AMIs
 ## (Listed first as they are pre-configured for Cloudberry development)
+##
+## Naming: the image factory (2026-07 family restructure) publishes
+## <family>-packer-<os>-<timestamp>. Entries whose ami_filter still uses the
+## old "cloudberry-packer-build-<os>-*" pattern are RETIRED platforms in the
+## image factory — their filters match only surviving legacy AMIs and will
+## stop resolving once legacy images are cleaned up.
 ## ----------------------------------------------------------------------
 
   al2023-cbdb-build:
@@ -50,7 +56,7 @@ os_options:
     name: "Rocky Linux 9 - Cloudberry build"
     group: "Cloudberry - Custom Packer AMIs"
     ami_owner: "703671893074"
-    ami_filter: "cloudberry-packer-build-rocky9-*"
+    ami_filter: "cloudberry-packer-rocky9-*"
     username: "rocky"
     dir_name: "rl9-cbdb-build"
 
@@ -58,7 +64,7 @@ os_options:
     name: "Rocky Linux 10 - Cloudberry build"
     group: "Cloudberry - Custom Packer AMIs"
     ami_owner: "703671893074"
-    ami_filter: "cloudberry-packer-build-rocky10-*"
+    ami_filter: "cloudberry-packer-rocky10-*"
     username: "rocky"
     dir_name: "rl10-cbdb-build"
 
