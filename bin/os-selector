@@ -19,6 +19,7 @@ declare -A AMI_OWNERS
 declare -A AMI_FILTERS
 declare -A DEFAULT_USERNAMES
 declare -A DIR_NAMES
+declare -A OS_ARCHES
 declare -A SELECTION_MAP
 
 # Colors for output
@@ -87,6 +88,39 @@ declare -A INSTANCE_TYPE_SPECS=(
 )
 DEFAULT_INSTANCE_TYPE="c7i.4xlarge"
 
+# arm64 (Graviton) counterparts, offered when the selected OS entry declares
+# arch: arm64. Same four groups; specs from `aws ec2 describe-instance-types`.
+declare -A ARM64_INSTANCE_GROUP_TYPES=(
+    ["General Purpose"]="m7g.large m7g.xlarge m7g.2xlarge m7g.4xlarge m7g.8xlarge"
+    ["Compute Optimized"]="c7g.large c7g.xlarge c7g.2xlarge c7g.4xlarge c7g.8xlarge"
+    ["Memory Optimized"]="r7g.large r7g.xlarge r7g.2xlarge r7g.4xlarge"
+    ["Burstable"]="t4g.nano t4g.micro t4g.small t4g.medium t4g.large t4g.xlarge t4g.2xlarge"
+)
+INSTANCE_TYPE_SPECS+=(
+    ["m7g.large"]="2 vCPU, 8 GB"
+    ["m7g.xlarge"]="4 vCPU, 16 GB"
+    ["m7g.2xlarge"]="8 vCPU, 32 GB"
+    ["m7g.4xlarge"]="16 vCPU, 64 GB"
+    ["m7g.8xlarge"]="32 vCPU, 128 GB"
+    ["c7g.large"]="2 vCPU, 4 GB"
+    ["c7g.xlarge"]="4 vCPU, 8 GB"
+    ["c7g.2xlarge"]="8 vCPU, 16 GB"
+    ["c7g.4xlarge"]="16 vCPU, 32 GB"
+    ["c7g.8xlarge"]="32 vCPU, 64 GB"
+    ["r7g.large"]="2 vCPU, 16 GB"
+    ["r7g.xlarge"]="4 vCPU, 32 GB"
+    ["r7g.2xlarge"]="8 vCPU, 64 GB"
+    ["r7g.4xlarge"]="16 vCPU, 128 GB"
+    ["t4g.nano"]="2 vCPU, 0.5 GB"
+    ["t4g.micro"]="2 vCPU, 1 GB"
+    ["t4g.small"]="2 vCPU, 2 GB"
+    ["t4g.medium"]="2 vCPU, 4 GB"
+    ["t4g.large"]="2 vCPU, 8 GB"
+    ["t4g.xlarge"]="4 vCPU, 16 GB"
+    ["t4g.2xlarge"]="8 vCPU, 32 GB"
+)
+DEFAULT_INSTANCE_TYPE_ARM64="c7g.4xlarge"
+
 # Read a required field for an OS option from a YAML config file.
 # Fails loudly if yq errors or the field is missing/null/empty.
 read_required_field() {
@@ -103,6 +137,25 @@ read_required_field() {
         return 1
     fi
     printf '%s\n' "$value"
+}
+
+# Read an optional field for an OS option; prints the default when the field
+# is absent/null. Still fails loudly on a yq error.
+read_optional_field() {
+    local config_file="$1"
+    local key="$2"
+    local field="$3"
+    local default="$4"
+    local value
+    if ! value=$(yq eval ".os_options[\"$key\"].$field" "$config_file"); then
+        echo -e "${RED}❌ Error: yq failed to read '.os_options.$key.$field' from $config_file${NC}" >&2
+        return 1
+    fi
+    if [[ -z "$value" || "$value" == "null" ]]; then
+        printf '%s\n' "$default"
+    else
+        printf '%s\n' "$value"
+    fi
 }
 
 # Function to load all YAML configurations matching pattern
@@ -166,6 +219,16 @@ load_yaml_config() {
             AMI_FILTERS["$key"]=$(read_required_field "$config_file" "$key" "ami_filter") || exit 1
             DEFAULT_USERNAMES["$key"]=$(read_required_field "$config_file" "$key" "username") || exit 1
             DIR_NAMES["$key"]=$(read_required_field "$config_file" "$key" "dir_name") || exit 1
+
+            # Optional CPU architecture (x86_64 default; arm64 selects the
+            # Graviton instance-type menu).
+            local arch
+            arch=$(read_optional_field "$config_file" "$key" "arch" "x86_64") || exit 1
+            if [[ "$arch" != "x86_64" && "$arch" != "arm64" ]]; then
+                echo -e "${RED}❌ Error: os_options.$key.arch must be 'x86_64' or 'arm64' (got '$arch') in $config_file${NC}" >&2
+                exit 1
+            fi
+            OS_ARCHES["$key"]="$arch"
         done
     done
 
@@ -1200,9 +1263,18 @@ get_node_count() {
 
 # Function to get instance type selection (two-level: group, then type).
 # Accepts the chosen node count: when >1 the Burstable group is hidden because
-# AWS cluster placement groups reject burstable (t3) instance types.
+# AWS cluster placement groups reject burstable (t3/t4g) instance types.
+# Accepts the OS architecture: arm64 offers the Graviton menu, x86_64 (default)
+# offers the Intel menu.
 get_instance_type() {
     local vm_count="${1:-1}"
+    local arch="${2:-x86_64}"
+
+    # Architecture-specific default type
+    local default_type="$DEFAULT_INSTANCE_TYPE"
+    if [[ "$arch" == "arm64" ]]; then
+        default_type="$DEFAULT_INSTANCE_TYPE_ARM64"
+    fi
 
     # Build the active group list, omitting Burstable for multi-node clusters.
     local -a group_order=()
@@ -1218,7 +1290,7 @@ get_instance_type() {
     # Group-selection loop
     while true; do
         echo
-        echo -e "${YELLOW}Select Instance Type:${NC}"
+        echo -e "${YELLOW}Select Instance Type:${NC} ${PURPLE}(architecture: ${arch})${NC}"
         echo
         echo -e "${CYAN}Instance Type Groups:${NC}"
         echo
@@ -1235,12 +1307,12 @@ get_instance_type() {
         echo
         echo -e "  ${GREEN}[q]${NC} Quit"
         echo
-        echo -n -e "${YELLOW}Select group [1-${num_groups}/q] or press Enter for default (${DEFAULT_INSTANCE_TYPE}): ${NC}"
+        echo -n -e "${YELLOW}Select group [1-${num_groups}/q] or press Enter for default (${default_type}): ${NC}"
         read -r group_choice
 
         # Default: Enter selects Compute Optimized and its default type
         if [[ -z "$group_choice" ]]; then
-            SELECTED_INSTANCE_TYPE="$DEFAULT_INSTANCE_TYPE"
+            SELECTED_INSTANCE_TYPE="$default_type"
             return 0
         fi
 
@@ -1259,7 +1331,11 @@ get_instance_type() {
 
         local group="${group_order[$((group_choice - 1))]}"
         local -a types=()
-        read -r -a types <<< "${INSTANCE_GROUP_TYPES[$group]}"
+        if [[ "$arch" == "arm64" ]]; then
+            read -r -a types <<< "${ARM64_INSTANCE_GROUP_TYPES[$group]}"
+        else
+            read -r -a types <<< "${INSTANCE_GROUP_TYPES[$group]}"
+        fi
         local num_types=${#types[@]}
 
         # Type-selection loop for the chosen group
@@ -1279,7 +1355,7 @@ get_instance_type() {
                 idx=$(printf '%2d' "$((ti + 1))")
                 local padded
                 padded=$(printf '%-12s' "$type")
-                if [[ "$type" == "$DEFAULT_INSTANCE_TYPE" ]]; then
+                if [[ "$type" == "$default_type" ]]; then
                     echo -e "    ${GREEN}[${idx}]${NC} ${padded} (${spec}) ${PURPLE}[default]${NC}"
                 else
                     echo -e "    ${GREEN}[${idx}]${NC} ${padded} (${spec})"
@@ -1435,6 +1511,7 @@ confirm_creation() {
         echo -e "  ${PURPLE}AMI Filter:${NC} ${AMI_FILTERS[$actual_key]}"
         echo -e "  ${PURPLE}Username:${NC} ${DEFAULT_USERNAMES[$actual_key]}"
         echo -e "  ${PURPLE}Database Nodes:${NC} $vm_count $([ "$vm_count" -gt 1 ] && echo "(cluster placement group)" || echo "(no placement group)")"
+        echo -e "  ${PURPLE}Architecture:${NC} ${OS_ARCHES[$actual_key]:-x86_64}"
         echo -e "  ${PURPLE}Instance Type:${NC} $instance_type"
         echo -e "  ${PURPLE}Spot Instances:${NC} $([ "$use_spot" = "true" ] && echo "✓ Enabled" || echo "✗ Disabled")"
         echo -e "  ${PURPLE}DBaaS Platform:${NC} $([ "$deploy_dbaas" = "true" ] && echo "✓ Enabled (EKS + S3)" || echo "✗ Disabled")"
@@ -1504,8 +1581,10 @@ main() {
                             get_node_count
                             local vm_count="$SELECTED_VM_COUNT"
 
-                            # Step 5: Get instance type (Burstable hidden when vm_count > 1)
-                            get_instance_type "$vm_count"
+                            # Step 5: Get instance type (Burstable hidden when
+                            # vm_count > 1; menu follows the OS architecture)
+                            local os_arch="${OS_ARCHES[${SELECTION_MAP[$selection]}]:-x86_64}"
+                            get_instance_type "$vm_count" "$os_arch"
                             local instance_type="$SELECTED_INSTANCE_TYPE"
 
                             # Step 6: Get spot instance preference
