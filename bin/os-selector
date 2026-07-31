@@ -629,6 +629,26 @@ alias lssh2='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_usernam
 # Port forward for omnigent (local 6767 -> remote 127.0.0.1:6767)
 alias log='echo "omnigent: http://127.0.0.1:6767" && ssh "\${SSH_OPTS[@]}" -L 6767:127.0.0.1:6767 -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\$(get_instance_ip 0) -A'
 
+# Attach to a Herdr session on instance 0.
+# Requires: herdr installed on the remote host, and a one-time
+# "Include ~/.ssh/launcher.d/*.conf" line at the top of ~/.ssh/config.
+# herdr --remote resolves its target through ~/.ssh/config, so the generated
+# key and host-key options are written to a per-environment Host entry first.
+alias lherdr='_lherdr() {
+  local ip; ip=\$(get_instance_ip 0) || return 1
+  mkdir -p ~/.ssh/launcher.d
+  cat > ~/.ssh/launcher.d/\${TF_VAR_env_prefix}.conf <<CFG
+Host \${TF_VAR_env_prefix}
+  HostName \${ip}
+  User \${TF_VAR_default_username}
+  IdentityFile \$(cd "\$(dirname "\${SSH_KEY_PATH}")" && pwd)/\$(basename "\${SSH_KEY_PATH}")
+  ForwardAgent yes
+  StrictHostKeyChecking no
+  UserKnownHostsFile /dev/null
+CFG
+  herdr --remote "\${TF_VAR_env_prefix}"
+}; _lherdr'
+
 # Create cbadmin aliases (backward compatible: lcssh, lcw, lccopyto, etc.)
 create_user_ssh_aliases "cbadmin" "lc" "lcw"
 
