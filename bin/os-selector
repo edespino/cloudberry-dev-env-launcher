@@ -649,6 +649,38 @@ CFG
   herdr --remote "\${TF_VAR_env_prefix}"
 }; _lherdr'
 
+# Hermes web dashboard on instance 0, reached only through an SSH tunnel
+# (dashboard binds 127.0.0.1:9119 on the host; no SG port is opened).
+# The dashboard runs as the profile-repo-managed systemd user service
+# 'hermes-dashboard': this verifies it remotely, starts it if installed but
+# inactive, prints the install hint if missing, then opens the local tunnel
+# and browser. Reuses an existing tunnel when local 9119 already listens.
+alias lhermes='_lhermes() {
+  local ip; ip=\$(get_instance_ip 0) || return 1
+  local state
+  state=\$(ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\${ip} \\
+    "systemctl --user is-active hermes-dashboard 2>/dev/null" </dev/null) || true
+  if [ "\$state" != "active" ]; then
+    if ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\${ip} \\
+        "systemctl --user cat hermes-dashboard" </dev/null >/dev/null 2>&1; then
+      echo "hermes-dashboard: \${state:-unknown} — starting..."
+      ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\${ip} \\
+        "systemctl --user start hermes-dashboard" </dev/null || return 1
+    else
+      echo "❌ hermes-dashboard service is not installed on \${ip}. Install it there with:"
+      echo "   cd ~/workspace/agentic-dev-environment && ./scripts/install-hermes-dashboard-service.sh --enable"
+      echo "   loginctl enable-linger \${TF_VAR_default_username}   # reboot persistence on headless hosts"
+      return 1
+    fi
+  fi
+  if ! lsof -nP -iTCP:9119 -sTCP:LISTEN >/dev/null 2>&1; then
+    ssh "\${SSH_OPTS[@]}" -f -N -L 9119:127.0.0.1:9119 -i \${SSH_KEY_PATH} \\
+      \${TF_VAR_default_username}@\${ip} || return 1
+  fi
+  echo "hermes dashboard: http://127.0.0.1:9119/"
+  open http://127.0.0.1:9119/
+}; _lhermes'
+
 # Create cbadmin aliases (backward compatible: lcssh, lcw, lccopyto, etc.)
 create_user_ssh_aliases "cbadmin" "lc" "lcw"
 
