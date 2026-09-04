@@ -1,0 +1,317 @@
+# DBaaS External Access Setup Guide
+
+This guide will help you set up external access to your DBaaS UI with static IPs and custom domain.
+
+## Quick Start
+
+### 1. Get Your Cloudflare Credentials
+
+**Get Zone ID:**
+1. Log in to [Cloudflare Dashboard](https://dash.cloudflare.com/)
+2. Select your domain: `synxdata.com`
+3. Copy the **Zone ID** from the right sidebar (under "API" section)
+
+**Create API Token:**
+1. Go to [API Tokens](https://dash.cloudflare.com/profile/api-tokens)
+2. Click **Create Token**
+3. Use the **Edit zone DNS** template
+4. Select Permissions:
+   - Zone - Zone Settings - Read
+   - Zone - DNS - Edit
+5. Under **Zone Resources**, select your domain
+6. Click **Continue to summary** → **Create Token**
+7. Copy the token (you won't see it again!)
+
+### 2. Set Environment Variable
+
+```bash
+export TF_VAR_cloudflare_api_token="your-cloudflare-api-token-here"
+```
+
+Or add to your shell profile (~/.bashrc, ~/.zshrc):
+```bash
+echo 'export TF_VAR_cloudflare_api_token="your-token"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+### 3. Create Configuration File
+
+```bash
+# Copy example configuration
+cp external-access.tfvars.example external-access.tfvars
+
+# Edit the file
+nano external-access.tfvars
+```
+
+Update these values:
+```hcl
+enable_alb_ingress       = true
+dbaas_domain_name        = "synxdb-elastic-demo.synxdata.com"  # Your domain
+enable_cloudflare_dns    = true
+cloudflare_zone_id       = "abc123def456"  # Your Zone ID
+cloudflare_proxy_enabled = false  # Start with HTTP-only, enable later for HTTPS
+enable_ssl_redirect      = false
+```
+
+### 4. Update Main Configuration
+
+Edit your `terraform.tfvars` to enable the dbaas-platform module:
+
+```hcl
+# Enable DBaaS platform deployment
+deploy_dbaas_services = true
+```
+
+### 5. Apply Terraform
+
+```bash
+# Initialize (if providers changed)
+terraform init
+
+# Plan
+terraform plan -var-file="external-access.tfvars"
+
+# Apply
+terraform apply -var-file="external-access.tfvars"
+```
+
+This will take approximately **10-15 minutes** to:
+- Create IAM role and policy for AWS Load Balancer Controller
+- Deploy AWS Load Balancer Controller via Helm
+- Create Kubernetes Ingress resource
+- Provision Application Load Balancer (ALB)
+- Configure Cloudflare DNS
+
+### 6. Get Access URLs
+
+After deployment completes:
+
+```bash
+# View outputs
+terraform output
+
+# Get specific URLs
+terraform output dbaas_ui_url_https
+terraform output dbaas_console_url_https
+```
+
+### 7. Access Your DBaaS UI
+
+Open in browser (HTTP initially, HTTPS after ACM certificate setup):
+- **Operations Dashboard**: `http://synxdb-elastic-demo.synxdata.com/ops/`
+- **User Console**: `http://synxdb-elastic-demo.synxdata.com/console/user/login`
+
+## Verification Steps
+
+### Check DNS Resolution
+
+```bash
+dig synxdb-elastic-demo.synxdata.com
+```
+
+Expected output (with Cloudflare proxy disabled):
+```
+synxdb-elastic-demo.synxdata.com. 300 IN CNAME k8s-dbaas-xxxxx.us-west-2.elb.amazonaws.com
+k8s-dbaas-xxxxx.us-west-2.elb.amazonaws.com. 60 IN A xxx.xxx.xxx.xxx
+```
+
+### Check ALB Status
+
+```bash
+kubectl get ingress -n dbaas
+```
+
+Expected output:
+```
+NAME              CLASS   HOSTS                               ADDRESS
+dbaas-ui-ingress  alb     synxdb-elastic-demo.synxdata.com   k8s-dbaas-xxxxx.us-west-2.elb.amazonaws.com
+```
+
+### Check AWS Load Balancer Controller
+
+```bash
+kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller
+```
+
+Expected output:
+```
+NAME                                            READY   STATUS    RESTARTS   AGE
+aws-load-balancer-controller-xxxxxxxxxx-xxxxx   1/1     Running   0          5m
+```
+
+### Test Access
+
+```bash
+# Test HTTP access
+curl -I http://synxdb-elastic-demo.synxdata.com/ops/
+
+# Check ALB target health
+aws elbv2 describe-target-health --target-group-arn <target-group-arn> --region us-west-2
+```
+
+## Troubleshooting
+
+### Issue: DNS not resolving
+
+**Solution:**
+```bash
+# Check Cloudflare DNS records
+terraform output cloudflare_dns_records
+
+# Verify in Cloudflare dashboard
+# DNS → Records → Look for your domain
+```
+
+### Issue: 502 Bad Gateway
+
+**Cause:** Ingress controller or backend service not ready
+
+**Solution:**
+```bash
+# Check ingress-nginx pods
+kubectl get pods -n ingress-nginx
+
+# Check DBaaS service
+kubectl get pods -n dbaas
+
+# Check service endpoints
+kubectl get endpoints -n dbaas dbaas-integration
+```
+
+### Issue: 503 Service Unavailable
+
+**Cause:** Backend service is not responding
+
+**Solution:**
+```bash
+# Check DBaaS logs
+kubectl logs -n dbaas -l app.kubernetes.io/name=synxdb-dbaas-integration
+
+# Check service
+kubectl describe svc -n dbaas dbaas-integration
+```
+
+### Issue: Cloudflare 525 Error
+
+**Cause:** SSL handshake failed between Cloudflare and origin
+
+**Solution:**
+- Ensure `cloudflare_proxy_enabled = true`
+- Use Cloudflare SSL mode: **Flexible** (in Cloudflare dashboard → SSL/TLS)
+- Or configure TLS at ingress-nginx level with valid certificate
+
+### Issue: Connection timeout
+
+**Cause:** Security group or firewall blocking traffic
+
+**Solution:**
+```bash
+# Check NLB security group
+terraform output | grep security_group
+
+# Verify nlb_allowed_cidrs includes your IP
+```
+
+## Security Best Practices
+
+### 1. Restrict Access by IP
+
+Configure AWS security groups for the ALB to restrict access:
+```bash
+# Add IP restrictions to ALB security group via AWS Console or CLI
+aws ec2 authorize-security-group-ingress \
+  --group-id <alb-security-group-id> \
+  --protocol tcp --port 80 \
+  --cidr 203.0.113.0/24
+```
+
+### 2. Enable Cloudflare Firewall
+
+Use Cloudflare firewall rules for additional protection:
+- Configure in Cloudflare Dashboard → Security → WAF
+- Add IP access rules
+- Enable rate limiting
+
+### 3. Monitor Access Logs
+
+```bash
+# Check ALB access logs (configure S3 bucket for ALB logs)
+# View in S3 or use Athena for analysis
+
+# AWS Load Balancer Controller logs
+kubectl logs -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller --tail=100
+
+# Cloudflare logs (requires Enterprise plan)
+# Available in Cloudflare dashboard
+```
+
+## Updating Configuration
+
+To change domain or settings:
+
+```bash
+# Edit configuration
+nano external-access.tfvars
+
+# Apply changes
+terraform apply -var-file="external-access.tfvars"
+```
+
+## Disabling External Access
+
+To remove external access while keeping EKS cluster:
+
+```bash
+# Edit external-access.tfvars
+enable_alb_ingress = false
+
+# Apply
+terraform apply -var-file="external-access.tfvars"
+```
+
+This will remove:
+- Application Load Balancer (ALB)
+- AWS Load Balancer Controller
+- Kubernetes Ingress resource
+- IAM role and policy
+- Cloudflare DNS records
+
+But keeps:
+- EKS cluster
+- DBaaS application
+- RDS database
+- S3 buckets
+
+## Cost Impact
+
+**Additional Monthly Costs:**
+- Application Load Balancer: ~$16-20/month ($0.0225/hour)
+- ALB Load Balancer Capacity Units (LCUs): Variable based on usage
+- Data transfer: Variable (typically $0.09/GB out)
+- Cloudflare: Free tier (includes SSL + DDoS when proxy enabled)
+
+**Estimated Total: ~$20-30/month** (excluding data transfer and LCUs)
+
+## Next Steps
+
+1. ✅ Set up monitoring and alerting
+2. ✅ Configure backup and disaster recovery
+3. ✅ Implement CI/CD pipeline for DBaaS deployments
+4. ✅ Set up log aggregation (e.g., CloudWatch, ELK)
+5. ✅ Configure auto-scaling for EKS nodes
+6. ✅ Implement network policies for pod-to-pod security
+
+## Support
+
+For issues or questions:
+1. Check the main [EXTERNAL-ACCESS.md](../../../modules/aws/dbaas-platform/EXTERNAL-ACCESS.md) documentation
+2. Review Terraform state: `terraform show`
+3. Check logs: `kubectl logs -n <namespace> <pod-name>`
+4. Contact your DevOps team
+
+---
+
+**Created**: 2025-11-13
+**Environment**: rl9-synx-elastic
+**Module Version**: dbaas-platform v1.0
