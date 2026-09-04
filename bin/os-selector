@@ -652,34 +652,121 @@ CFG
 # Hermes web dashboard on instance 0, reached only through an SSH tunnel
 # (dashboard binds 127.0.0.1:9119 on the host; no SG port is opened).
 # The dashboard runs as the profile-repo-managed systemd user service
-# 'hermes-dashboard': this verifies it remotely, starts it if installed but
-# inactive, prints the install hint if missing, then opens the local tunnel
-# and browser. Reuses an existing tunnel when local 9119 already listens.
+# 'hermes-dashboard'. One SSH round-trip probes reachability, unit presence
+# and unit state, so an unreachable host is reported as unreachable rather
+# than as a missing service. After a start, the remote port is polled for
+# readiness before the browser opens. An existing local listener on 9119 is
+# reused ONLY when it is a tunnel to THIS instance -- any other holder (a
+# local "hermes serve" / "hermes dashboard", which also default to 9119, or
+# a stale tunnel to a replaced instance) is reported rather than silently
+# opening the wrong backend.
+#   lhermes          verify/start the service, tunnel, open the dashboard
+#   lhermes --stop   tear down the tunnel this alias created
 alias lhermes='_lhermes() {
+  local port=9119
+  local holder cmd ip probe state unit
+
+  holder=\$(lsof -nP -iTCP:\${port} -sTCP:LISTEN -t 2>/dev/null | head -n1)
+  cmd=""
+  if [ -n "\$holder" ]; then
+    cmd=\$(ps -o command= -p "\$holder" 2>/dev/null)
+  fi
+
+  if [ "\$1" = "--stop" ]; then
+    if [ -z "\$holder" ]; then
+      echo "no local listener on \${port}"
+      return 0
+    fi
+    if echo "\$cmd" | grep -q -- "-L \${port}:127.0.0.1:\${port}"; then
+      kill "\$holder" && echo "tunnel closed (pid \${holder})"
+      return 0
+    fi
+    echo "❌ local port \${port} is held by a process that is not an lhermes tunnel (pid \${holder}):"
+    echo "   \${cmd}"
+    return 1
+  fi
+
+  ip=\$(get_instance_ip 0) || return 1
+
+  # One round-trip yields reachability (ssh exit status), unit presence and state.
+  probe=\$(ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\${ip} \\
+    "systemctl --user is-active hermes-dashboard 2>/dev/null; systemctl --user cat hermes-dashboard >/dev/null 2>&1 && echo UNIT=present || echo UNIT=missing" </dev/null) || {
+    echo "❌ cannot reach \${TF_VAR_default_username}@\${ip} over SSH."
+    echo "   The instance may have been replaced; re-check with: get_instance_ip 0"
+    return 1
+  }
+  state=\$(echo "\$probe" | head -n1)
+  unit=\$(echo "\$probe" | tail -n1)
+  case \$state in UNIT=*) state="" ;; esac
+
+  if [ "\$unit" != "UNIT=present" ]; then
+    echo "❌ hermes-dashboard service is not installed on \${ip}. Install it there with:"
+    echo "   cd ~/workspace/agentic-dev-environment && ./scripts/install-hermes-dashboard-service.sh --enable"
+    echo "   loginctl enable-linger \${TF_VAR_default_username}   # reboot persistence on headless hosts"
+    return 1
+  fi
+
+  if [ "\$state" != "active" ]; then
+    echo "hermes-dashboard: \${state:-unknown} — starting..."
+    ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\${ip} \\
+      "systemctl --user start hermes-dashboard" </dev/null || return 1
+    ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\${ip} \\
+      "for i in \\\$(seq 1 30); do ss -ltn 2>/dev/null | grep -q 127.0.0.1:\${port} && exit 0; sleep 0.5; done; exit 1" </dev/null || {
+      echo "❌ hermes-dashboard started but is not listening on 127.0.0.1:\${port} after 15s."
+      return 1
+    }
+  fi
+
+  if [ -n "\$holder" ]; then
+    if ! echo "\$cmd" | grep -q -- "-L \${port}:127.0.0.1:\${port}" || ! echo "\$cmd" | grep -q -- "@\${ip}"; then
+      echo "❌ local port \${port} is already held by another process (pid \${holder}):"
+      echo "   \${cmd}"
+      echo "   Stop that process (lhermes --stop if it is a stale tunnel), then retry."
+      return 1
+    fi
+  else
+    ssh "\${SSH_OPTS[@]}" -o ExitOnForwardFailure=yes -f -N -L \${port}:127.0.0.1:\${port} \\
+      -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\${ip} || return 1
+  fi
+
+  echo "hermes dashboard: http://127.0.0.1:\${port}/"
+  open http://127.0.0.1:\${port}/
+}; _lhermes'
+
+# Hindsight agent-memory UI on instance 0, reached only through an SSH tunnel.
+# The container publishes 9999 (Next.js control-plane UI) and 8888 (dataplane
+# API) on 0.0.0.0, but no SG port is opened for either, so both stay private.
+# Both ports are forwarded at matching local numbers: the UI resolves its API
+# at http://localhost:8888, so any browser-side call follows the tunnel too.
+# Runs as a plain docker container (restart=unless-stopped, volume
+# hindsight-data), so the readiness check is docker inspect, not systemctl.
+# Reuses an existing tunnel when local 9999 already listens.
+alias lhindsight='_lhindsight() {
   local ip; ip=\$(get_instance_ip 0) || return 1
   local state
   state=\$(ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\${ip} \\
-    "systemctl --user is-active hermes-dashboard 2>/dev/null" </dev/null) || true
-  if [ "\$state" != "active" ]; then
-    if ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\${ip} \\
-        "systemctl --user cat hermes-dashboard" </dev/null >/dev/null 2>&1; then
-      echo "hermes-dashboard: \${state:-unknown} — starting..."
-      ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\${ip} \\
-        "systemctl --user start hermes-dashboard" </dev/null || return 1
-    else
-      echo "❌ hermes-dashboard service is not installed on \${ip}. Install it there with:"
-      echo "   cd ~/workspace/agentic-dev-environment && ./scripts/install-hermes-dashboard-service.sh --enable"
-      echo "   loginctl enable-linger \${TF_VAR_default_username}   # reboot persistence on headless hosts"
-      return 1
-    fi
+    "docker inspect -f {{.State.Status}} hindsight 2>/dev/null" </dev/null) || true
+  if [ -z "\$state" ]; then
+    echo "❌ hindsight container is not present on \${ip}."
+    echo "   image:  ghcr.io/vectorize-io/hindsight:latest"
+    echo "   volume: hindsight-data -> /home/hindsight/.pg0"
+    echo "   ports:  9999 control-plane UI, 8888 dataplane API"
+    echo "   docs:   https://github.com/vectorize-io/hindsight"
+    return 1
   fi
-  if ! lsof -nP -iTCP:9119 -sTCP:LISTEN >/dev/null 2>&1; then
-    ssh "\${SSH_OPTS[@]}" -f -N -L 9119:127.0.0.1:9119 -i \${SSH_KEY_PATH} \\
-      \${TF_VAR_default_username}@\${ip} || return 1
+  if [ "\$state" != "running" ]; then
+    echo "hindsight: \${state} — starting..."
+    ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\${ip} \\
+      "docker start hindsight" </dev/null >/dev/null || return 1
   fi
-  echo "hermes dashboard: http://127.0.0.1:9119/"
-  open http://127.0.0.1:9119/
-}; _lhermes'
+  if ! lsof -nP -iTCP:9999 -sTCP:LISTEN >/dev/null 2>&1; then
+    ssh "\${SSH_OPTS[@]}" -f -N -L 9999:127.0.0.1:9999 -L 8888:127.0.0.1:8888 \\
+      -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\${ip} || return 1
+  fi
+  echo "hindsight UI:  http://127.0.0.1:9999/"
+  echo "hindsight API: http://127.0.0.1:8888/"
+  open http://127.0.0.1:9999/
+}; _lhindsight'
 
 # Create cbadmin aliases (backward compatible: lcssh, lcw, lccopyto, etc.)
 create_user_ssh_aliases "cbadmin" "lc" "lcw"
