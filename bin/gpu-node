@@ -1,0 +1,633 @@
+#!/usr/bin/env bash
+#
+# GPU Node Selector for Cloudberry Development Environment Launcher
+#
+# Scaffolds a "gpu-node" sidecar directory that attaches one NVIDIA L4 (g6)
+# instance to an EXISTING database-cluster environment. The sidecar has its own
+# Terraform state and borrows the parent's VPC, subnet, security group, and SSH
+# key pair by tag lookup at plan time. Nothing in the parent directory is
+# modified and this script never runs terraform apply.
+#
+# Usage:
+#   bin/gpu-node                      interactive
+#   bin/gpu-node --parent environments/synx/ubuntu26-arm64-agentic \
+#                --node-name gpu-l4 --instance-type g6.2xlarge \
+#                --ami ubuntu26-agentic --yes
+#   bin/gpu-node ... --check          also run read-only AZ offering + quota checks
+#
+
+set -euo pipefail
+
+# Get script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+ENVIRONMENTS_DIR="$REPO_ROOT/environments"
+TEMPLATE_DIR="$ENVIRONMENTS_DIR/gpu-node-sample"
+MODULE_DIR="$REPO_ROOT/modules/aws/gpu-node"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+# Allowed instance types (NVIDIA L4, x86_64). Matches the module's validation.
+ALLOWED_INSTANCE_TYPES=("g6.2xlarge" "g6.xlarge")
+ALLOWED_INSTANCE_SPECS=(
+    "8 vCPU, 32 GiB RAM, 1x L4 24 GB (default)"
+    "4 vCPU, 16 GiB RAM, 1x L4 24 GB (host RAM below VRAM; no CPU offload headroom)"
+)
+DEFAULT_NODE_NAME="gpu-l4"
+DEFAULT_HOSTNAME="gpu"
+DEFAULT_AMI_KEY="ubuntu26-gpu"
+OLLAMA_ACCESS_MODES=("tunnel" "vpc" "vpc+laptop")
+OLLAMA_ACCESS_DESCS=(
+    "Ollama on 127.0.0.1 only; laptop and cdw use ssh -L 11434:127.0.0.1:11434 (default)"
+    "Ollama on 0.0.0.0; VPC hosts (cdw) use http://<private-ip>:11434; laptop still tunnels; no SG change"
+    "vpc, plus a sidecar SG allowing 11434 from this laptop's /32; laptop uses http://<public-ip>:11434"
+)
+DEFAULT_OLLAMA_ACCESS="tunnel"
+QUOTA_CODE="L-DB2E81BA"   # Running On-Demand G and VT instances (vCPUs)
+
+usage() {
+    cat <<USAGE
+Usage: $(basename "$0") [options]
+
+Scaffold a gpu-node sidecar directory next to an existing environment.
+
+Options:
+  --parent <dir>          Parent environment directory (absolute, or relative to
+                          the current directory or the repo root)
+  --node-name <name>      Node name appended to the parent prefix (default: $DEFAULT_NODE_NAME)
+  --instance-type <type>  ${ALLOWED_INSTANCE_TYPES[0]} (default) or ${ALLOWED_INSTANCE_TYPES[1]}
+  --ami <key>             x86_64 os_options key from config/gpu-config-*.yaml or
+                          config/os-config-*.yaml (default: $DEFAULT_AMI_KEY when present)
+  --hostname <name>       Linux hostname of the node (default: $DEFAULT_HOSTNAME)
+  --ollama-access <mode>  tunnel (default) | vpc | vpc+laptop  (see the generated .envrc for
+                          what each mode opens; Ollama has no authentication)
+  --private-ip <addr>     Pin the node's private IPv4 inside the parent subnet so rebuilds keep
+                          the same address (default: DHCP). --check verifies it is free.
+  --check                 After scaffolding, run read-only AWS checks: g6 offering in
+                          the parent's AZ and the G/VT vCPU quota (needs credentials)
+  --yes                   Skip the confirmation prompt and use defaults for any of
+                          --node-name / --instance-type / --ami not given
+  -h, --help              Show this help
+
+The script never runs terraform apply and never edits the parent directory.
+USAGE
+}
+
+die() {
+    echo -e "${RED}❌ $*${NC}" >&2
+    exit 1
+}
+
+# prompt <text>: reads a line into REPLY; fails loudly on EOF (non-interactive
+# use without enough flags); "q" quits.
+prompt() {
+    echo -n -e "${YELLOW}$1${NC}"
+    if ! read -r REPLY; then
+        echo
+        die "No input available. Non-interactive use needs --parent plus --yes (defaults) or explicit --node-name/--instance-type/--ami."
+    fi
+    if [[ "$REPLY" == "q" || "$REPLY" == "Q" ]]; then
+        echo -e "${YELLOW}👋 Nothing created.${NC}"
+        exit 0
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+PARENT_ARG=""
+NODE_NAME=""
+INSTANCE_TYPE=""
+AMI_KEY=""
+NODE_HOSTNAME=""
+OLLAMA_ACCESS=""
+PRIVATE_IP=""
+RUN_CHECK=0
+ASSUME_YES=0
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --parent)        PARENT_ARG="${2:-}"; shift 2 ;;
+        --node-name)     NODE_NAME="${2:-}"; shift 2 ;;
+        --instance-type) INSTANCE_TYPE="${2:-}"; shift 2 ;;
+        --ami)           AMI_KEY="${2:-}"; shift 2 ;;
+        --hostname)      NODE_HOSTNAME="${2:-}"; shift 2 ;;
+        --ollama-access) OLLAMA_ACCESS="${2:-}"; shift 2 ;;
+        --private-ip)    PRIVATE_IP="${2:-}"; shift 2 ;;
+        --check)         RUN_CHECK=1; shift ;;
+        --yes|-y)        ASSUME_YES=1; shift ;;
+        -h|--help)       usage; exit 0 ;;
+        *)               usage >&2; die "Unknown option: $1" ;;
+    esac
+done
+
+# ---------------------------------------------------------------------------
+# Prerequisites
+# ---------------------------------------------------------------------------
+for tool in yq jq; do
+    if ! command -v "$tool" &>/dev/null; then
+        die "$tool command not found. Install with: brew install $tool"
+    fi
+done
+[[ -d "$TEMPLATE_DIR" ]] || die "Template directory not found: $TEMPLATE_DIR"
+[[ -d "$MODULE_DIR" ]]   || die "Module directory not found: $MODULE_DIR"
+
+# ---------------------------------------------------------------------------
+# Load x86_64 AMI options: config/gpu-config-*.yaml first (GPU images; the
+# default lives here and os-selector never loads this prefix), then the x86_64
+# entries of config/os-config-*.yaml as alternatives. arm64 entries are
+# skipped: the g6 family is x86_64 only.
+# Optional per-entry field ami_match: "name" (default) or "passed-tag".
+# ---------------------------------------------------------------------------
+AMI_KEYS=()
+AMI_NAMES=()
+AMI_GROUPS=()
+AMI_OWNERS=()
+AMI_FILTERS=()
+AMI_USERS=()
+AMI_MATCHES=()
+
+read_field() {
+    # read_field <file> <key> <field> [default]; fails when required and missing
+    local file="$1" key="$2" field="$3" default="${4-__required__}" value
+    value=$(yq eval ".os_options[\"$key\"].$field" "$file") || die "yq failed to read .os_options.$key.$field from $file"
+    if [[ -z "$value" || "$value" == "null" ]]; then
+        [[ "$default" == "__required__" ]] && die "Missing required field '$field' for os_options.$key in $file"
+        printf '%s\n' "$default"
+    else
+        printf '%s\n' "$value"
+    fi
+}
+
+load_ami_options() {
+    local -a config_files=()
+    local pattern f
+    for pattern in "$REPO_ROOT"/config/gpu-config-*.yaml "$REPO_ROOT"/config/os-config-*.yaml; do
+        [[ -e "$pattern" ]] && config_files+=("$pattern")
+    done
+    [[ ${#config_files[@]} -gt 0 ]] || die "No configuration files found matching: config/gpu-config-*.yaml or config/os-config-*.yaml"
+    # gpu-config files first (sorted), then os-config files (sorted)
+    mapfile -t config_files < <(
+        printf '%s\n' "${config_files[@]}" | grep '/gpu-config-' | sort
+        printf '%s\n' "${config_files[@]}" | grep '/os-config-' | sort
+    )
+
+    local key keys arch match
+    for f in "${config_files[@]}"; do
+        keys=$(yq eval '.os_options | keys | .[]' "$f") || die "yq failed to parse os_options keys from $f"
+        for key in $keys; do
+            arch=$(read_field "$f" "$key" "arch" "x86_64")
+            [[ "$arch" == "arm64" ]] && continue
+            match=$(read_field "$f" "$key" "ami_match" "name")
+            [[ "$match" == "name" || "$match" == "passed-tag" ]] || die "os_options.$key.ami_match must be 'name' or 'passed-tag' (got '$match') in $f"
+            AMI_KEYS+=("$key")
+            AMI_NAMES+=("$(read_field "$f" "$key" "name")")
+            AMI_GROUPS+=("$(read_field "$f" "$key" "group")")
+            AMI_OWNERS+=("$(read_field "$f" "$key" "ami_owner")")
+            AMI_FILTERS+=("$(read_field "$f" "$key" "ami_filter")")
+            AMI_USERS+=("$(read_field "$f" "$key" "username")")
+            AMI_MATCHES+=("$match")
+        done
+    done
+    [[ ${#AMI_KEYS[@]} -gt 0 ]] || die "No x86_64 AMI entries found in config/gpu-config-*.yaml or config/os-config-*.yaml"
+}
+
+# ---------------------------------------------------------------------------
+# Discover parent environments: directories with an applied database-cluster
+# state (terraform.tfstate containing module.database_cluster aws_subnet)
+# ---------------------------------------------------------------------------
+PARENT_DIRS=()
+PARENT_PREFIXES=()
+PARENT_SUBNETS=()
+PARENT_AZS=()
+PARENT_NODES=()
+
+parent_state_ok() {
+    jq -e '[.resources[]? | select(.module=="module.database_cluster" and .type=="aws_subnet")] | length == 1' "$1" >/dev/null 2>&1
+}
+
+discover_parents() {
+    local state dir prefix subnet az nodes
+    while IFS= read -r state; do
+        dir="$(dirname "$state")"
+        [[ "$dir" == "$TEMPLATE_DIR" || "$dir" == "$ENVIRONMENTS_DIR/multi-os-sample" ]] && continue
+        parent_state_ok "$state" || continue
+        prefix=$(jq -r '.outputs.ssh_key.value // empty | sub("_generated_key\\.pem$"; "")' "$state")
+        [[ -n "$prefix" ]] || continue
+        subnet=$(jq -r '[.resources[] | select(.module=="module.database_cluster" and .type=="aws_subnet")][0].instances[0].attributes.id // empty' "$state")
+        az=$(jq -r '[.resources[] | select(.module=="module.database_cluster" and .type=="aws_subnet")][0].instances[0].attributes.availability_zone // empty' "$state")
+        nodes=$(jq -r '[.resources[] | select(.module=="module.database_cluster" and .type=="aws_instance") | .instances[] | .attributes.tags.Hostname + ":" + .attributes.instance_type] | join(", ")' "$state")
+        PARENT_DIRS+=("$dir")
+        PARENT_PREFIXES+=("$prefix")
+        PARENT_SUBNETS+=("$subnet")
+        PARENT_AZS+=("$az")
+        PARENT_NODES+=("${nodes:-none}")
+    done < <(find "$ENVIRONMENTS_DIR" -mindepth 2 -maxdepth 4 -name terraform.tfstate -not -path '*/.terraform/*' | sort)
+}
+
+resolve_parent_arg() {
+    # Accept absolute, relative-to-cwd, or relative-to-repo-root paths
+    local arg="$1" candidate
+    for candidate in "$arg" "$PWD/$arg" "$REPO_ROOT/$arg"; do
+        if [[ -d "$candidate" ]]; then
+            (cd "$candidate" && pwd)
+            return 0
+        fi
+    done
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# Selection helpers
+# ---------------------------------------------------------------------------
+select_parent() {
+    local i choice
+    if [[ -n "$PARENT_ARG" ]]; then
+        local abs
+        abs=$(resolve_parent_arg "$PARENT_ARG") || die "Parent directory not found: $PARENT_ARG"
+        for i in "${!PARENT_DIRS[@]}"; do
+            if [[ "${PARENT_DIRS[$i]}" == "$abs" ]]; then
+                PARENT_IDX=$i
+                return 0
+            fi
+        done
+        die "Not an applied database-cluster environment (no module.database_cluster subnet in terraform.tfstate): $abs"
+    fi
+
+    echo
+    echo -e "${YELLOW}Select parent environment (applied database-cluster stacks):${NC}"
+    for i in "${!PARENT_DIRS[@]}"; do
+        printf "  ${GREEN}[%d]${NC} %s\n" "$((i + 1))" "${PARENT_DIRS[$i]#"$ENVIRONMENTS_DIR"/}"
+        printf "      ${PURPLE}prefix:${NC} %s  ${PURPLE}az:${NC} %s  ${PURPLE}nodes:${NC} %s\n" \
+            "${PARENT_PREFIXES[$i]}" "${PARENT_AZS[$i]}" "${PARENT_NODES[$i]}"
+    done
+    echo
+    while true; do
+        prompt "Choose parent [1-${#PARENT_DIRS[@]}] (q to quit): "
+        choice="$REPLY"
+        if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#PARENT_DIRS[@]} )); then
+            PARENT_IDX=$((choice - 1))
+            return 0
+        fi
+        echo -e "${RED}❌ Invalid selection.${NC}"
+    done
+}
+
+validate_node_name() {
+    [[ "$1" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]]
+}
+
+select_node_name() {
+    if [[ -z "$NODE_NAME" && $ASSUME_YES -eq 1 ]]; then
+        NODE_NAME="$DEFAULT_NODE_NAME"
+    fi
+    if [[ -n "$NODE_NAME" ]]; then
+        validate_node_name "$NODE_NAME" || die "Invalid --node-name '$NODE_NAME' (lowercase letters, digits, hyphens; 1-32 chars)"
+        return 0
+    fi
+    local input
+    while true; do
+        prompt "Node name (default: $DEFAULT_NODE_NAME, q to quit): "
+        input="${REPLY:-$DEFAULT_NODE_NAME}"
+        if validate_node_name "$input"; then
+            NODE_NAME="$input"
+            return 0
+        fi
+        echo -e "${RED}❌ Use lowercase letters, digits, hyphens; 1-32 characters.${NC}"
+    done
+}
+
+select_instance_type() {
+    local i choice
+    if [[ -z "$INSTANCE_TYPE" && $ASSUME_YES -eq 1 ]]; then
+        INSTANCE_TYPE="${ALLOWED_INSTANCE_TYPES[0]}"
+    fi
+    if [[ -n "$INSTANCE_TYPE" ]]; then
+        for i in "${!ALLOWED_INSTANCE_TYPES[@]}"; do
+            [[ "${ALLOWED_INSTANCE_TYPES[$i]}" == "$INSTANCE_TYPE" ]] && return 0
+        done
+        die "Invalid --instance-type '$INSTANCE_TYPE'. Allowed: ${ALLOWED_INSTANCE_TYPES[*]}"
+    fi
+    echo
+    echo -e "${YELLOW}Select instance type:${NC} ${PURPLE}(NVIDIA L4, x86_64)${NC}"
+    for i in "${!ALLOWED_INSTANCE_TYPES[@]}"; do
+        printf "  ${GREEN}[%d]${NC} %-12s ${CYAN}%s${NC}\n" "$((i + 1))" "${ALLOWED_INSTANCE_TYPES[$i]}" "${ALLOWED_INSTANCE_SPECS[$i]}"
+    done
+    while true; do
+        prompt "Choose [1-${#ALLOWED_INSTANCE_TYPES[@]}] (default: 1, q to quit): "
+        choice="${REPLY:-1}"
+        if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#ALLOWED_INSTANCE_TYPES[@]} )); then
+            INSTANCE_TYPE="${ALLOWED_INSTANCE_TYPES[$((choice - 1))]}"
+            return 0
+        fi
+        echo -e "${RED}❌ Invalid selection.${NC}"
+    done
+}
+
+select_ami() {
+    local i choice default_idx=0
+    local have_default=0
+    for i in "${!AMI_KEYS[@]}"; do
+        if [[ "${AMI_KEYS[$i]}" == "$DEFAULT_AMI_KEY" ]]; then default_idx=$i; have_default=1; fi
+    done
+    if [[ -z "$AMI_KEY" && $ASSUME_YES -eq 1 ]]; then
+        [[ $have_default -eq 1 ]] || die "--yes given but default AMI key '$DEFAULT_AMI_KEY' is not in config; pass --ami <key>"
+        AMI_KEY="$DEFAULT_AMI_KEY"
+    fi
+    if [[ -n "$AMI_KEY" ]]; then
+        for i in "${!AMI_KEYS[@]}"; do
+            if [[ "${AMI_KEYS[$i]}" == "$AMI_KEY" ]]; then
+                AMI_IDX=$i
+                return 0
+            fi
+        done
+        die "Unknown or non-x86_64 --ami key '$AMI_KEY'. Available: ${AMI_KEYS[*]}"
+    fi
+    echo
+    echo -e "${YELLOW}Select GPU AMI:${NC} ${PURPLE}(x86_64 entries from config/gpu-config-*.yaml, then config/os-config-*.yaml)${NC}"
+    for i in "${!AMI_KEYS[@]}"; do
+        printf "  ${GREEN}[%d]${NC} %-70s ${CYAN}%s${NC} ${PURPLE}[%s]${NC}%s\n" "$((i + 1))" "${AMI_NAMES[$i]}" "${AMI_FILTERS[$i]}" "${AMI_MATCHES[$i]}" \
+            "$([[ $i -eq $default_idx ]] && echo -e " ${PURPLE}(default)${NC}")"
+    done
+    while true; do
+        prompt "Choose [1-${#AMI_KEYS[@]}] (default: $((default_idx + 1)), q to quit): "
+        choice="${REPLY:-$((default_idx + 1))}"
+        if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#AMI_KEYS[@]} )); then
+            AMI_IDX=$((choice - 1))
+            return 0
+        fi
+        echo -e "${RED}❌ Invalid selection.${NC}"
+    done
+}
+
+select_ollama_access() {
+    local i choice
+    if [[ -z "$OLLAMA_ACCESS" && $ASSUME_YES -eq 1 ]]; then
+        OLLAMA_ACCESS="$DEFAULT_OLLAMA_ACCESS"
+    fi
+    if [[ -n "$OLLAMA_ACCESS" ]]; then
+        for i in "${!OLLAMA_ACCESS_MODES[@]}"; do
+            [[ "${OLLAMA_ACCESS_MODES[$i]}" == "$OLLAMA_ACCESS" ]] && return 0
+        done
+        die "Invalid --ollama-access '$OLLAMA_ACCESS'. Allowed: ${OLLAMA_ACCESS_MODES[*]}"
+    fi
+    echo
+    echo -e "${YELLOW}Select Ollama exposure:${NC} ${PURPLE}(Ollama has no authentication)${NC}"
+    for i in "${!OLLAMA_ACCESS_MODES[@]}"; do
+        printf "  ${GREEN}[%d]${NC} %-12s ${CYAN}%s${NC}\n" "$((i + 1))" "${OLLAMA_ACCESS_MODES[$i]}" "${OLLAMA_ACCESS_DESCS[$i]}"
+    done
+    while true; do
+        prompt "Choose [1-${#OLLAMA_ACCESS_MODES[@]}] (default: 1, q to quit): "
+        choice="${REPLY:-1}"
+        if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#OLLAMA_ACCESS_MODES[@]} )); then
+            OLLAMA_ACCESS="${OLLAMA_ACCESS_MODES[$((choice - 1))]}"
+            return 0
+        fi
+        echo -e "${RED}❌ Invalid selection.${NC}"
+    done
+}
+
+validate_ipv4() {
+    [[ "$1" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]] || return 1
+    local o
+    for o in "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}"; do
+        (( o <= 255 )) || return 1
+    done
+}
+
+select_private_ip() {
+    if [[ -n "$PRIVATE_IP" ]]; then
+        validate_ipv4 "$PRIVATE_IP" || die "Invalid --private-ip '$PRIVATE_IP' (IPv4 dotted quad expected)"
+        return 0
+    fi
+    [[ $ASSUME_YES -eq 1 ]] && return 0
+    while true; do
+        prompt "Pinned private IP inside the parent subnet (blank = DHCP, changes on rebuild; q to quit): "
+        if [[ -z "$REPLY" ]]; then
+            return 0
+        fi
+        if validate_ipv4 "$REPLY"; then
+            PRIVATE_IP="$REPLY"
+            return 0
+        fi
+        echo -e "${RED}❌ Not an IPv4 address.${NC}"
+    done
+}
+
+# ---------------------------------------------------------------------------
+# Placeholder replacement (same contract as os-selector)
+# ---------------------------------------------------------------------------
+replace_placeholder() {
+    local file="$1" placeholder="$2" value="$3"
+    grep -qF "$placeholder" "$file" || die "Internal error: placeholder $placeholder not found in $file"
+    sed -i.bak "s|$placeholder|$value|g" "$file"
+    rm -f "$file.bak"
+    grep -qF "$placeholder" "$file" && die "Internal error: placeholder $placeholder still present in $file"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Optional read-only AWS checks
+# ---------------------------------------------------------------------------
+run_checks() {
+    local region="$1" az="$2" itype="$3" sso_profile="$4" subnet="$5" pinned="$6"
+    echo
+    echo -e "${BLUE}🔎 Read-only AWS checks${NC}"
+    if [[ -z "${AWS_ACCESS_KEY_ID:-}" && -z "${AWS_PROFILE:-}" ]]; then
+        local creds
+        if creds=$(aws configure export-credentials --profile "$sso_profile" 2>/dev/null); then
+            AWS_ACCESS_KEY_ID=$(echo "$creds" | jq -r '.AccessKeyId')
+            AWS_SECRET_ACCESS_KEY=$(echo "$creds" | jq -r '.SecretAccessKey')
+            AWS_SESSION_TOKEN=$(echo "$creds" | jq -r '.SessionToken')
+            export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+        else
+            echo -e "${YELLOW}⚠️  No AWS credentials. Run: aws sso login --sso-session $sso_profile  (checks skipped)${NC}"
+            return 0
+        fi
+    fi
+    local offered quota
+    offered=$(aws ec2 describe-instance-type-offerings --region "$region" --location-type availability-zone \
+        --filters "Name=instance-type,Values=$itype" "Name=location,Values=$az" \
+        --query 'InstanceTypeOfferings[].InstanceType' --output text 2>&1) || { echo -e "${RED}   offering check failed: $offered${NC}"; offered=""; }
+    if [[ "$offered" == "$itype" ]]; then
+        echo -e "   ${GREEN}✅ $itype is offered in $az${NC}"
+    else
+        echo -e "   ${RED}❌ $itype is NOT offered in $az. Same-subnet placement is not possible; stop and report.${NC}"
+    fi
+    quota=$(aws service-quotas get-service-quota --region "$region" --service-code ec2 --quota-code "$QUOTA_CODE" \
+        --query 'Quota.Value' --output text 2>&1) || { echo -e "${RED}   quota check failed: $quota${NC}"; return 0; }
+    local need=8
+    [[ "$itype" == "g6.xlarge" ]] && need=4
+    if awk -v q="$quota" -v n="$need" 'BEGIN{exit !(q+0 >= n)}'; then
+        echo -e "   ${GREEN}✅ G/VT on-demand vCPU quota ($QUOTA_CODE) = $quota (need $need)${NC}"
+    else
+        echo -e "   ${RED}❌ G/VT on-demand vCPU quota ($QUOTA_CODE) = $quota, need $need. Apply would fail with VcpuLimitExceeded.${NC}"
+    fi
+    if [[ -n "$pinned" ]]; then
+        local holder
+        holder=$(aws ec2 describe-network-interfaces --region "$region" \
+            --filters "Name=subnet-id,Values=$subnet" "Name=addresses.private-ip-address,Values=$pinned" \
+            --query 'NetworkInterfaces[].[NetworkInterfaceId,Status,Description]' --output text 2>&1) || { echo -e "${RED}   private-ip check failed: $holder${NC}"; return 0; }
+        if [[ -z "$holder" ]]; then
+            echo -e "   ${GREEN}✅ $pinned is free in $subnet${NC}"
+        else
+            echo -e "   ${RED}❌ $pinned is already held in $subnet by: $holder${NC}"
+        fi
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+main() {
+    echo -e "${BLUE}🎮 GPU Node Selector${NC} ${PURPLE}(gpu-node sidecar for an existing database-cluster environment)${NC}"
+
+    load_ami_options
+    discover_parents
+    [[ ${#PARENT_DIRS[@]} -gt 0 ]] || die "No applied database-cluster environments found under environments/ (need a terraform.tfstate with module.database_cluster)."
+
+    PARENT_IDX=-1
+    AMI_IDX=-1
+    select_parent
+    select_node_name
+    select_instance_type
+    select_ami
+    select_ollama_access
+    select_private_ip
+    NODE_HOSTNAME="${NODE_HOSTNAME:-$DEFAULT_HOSTNAME}"
+    [[ "$NODE_HOSTNAME" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || die "Invalid --hostname '$NODE_HOSTNAME'"
+
+    local parent_dir="${PARENT_DIRS[$PARENT_IDX]}"
+    local parent_prefix="${PARENT_PREFIXES[$PARENT_IDX]}"
+    local parent_subnet="${PARENT_SUBNETS[$PARENT_IDX]}"
+    local parent_az="${PARENT_AZS[$PARENT_IDX]}"
+    local parent_rel="${parent_dir#"$ENVIRONMENTS_DIR"/}"
+    local parent_base
+    parent_base="$(basename "$parent_dir")"
+
+    # Inherit SSO profile and region from the parent's .envrc (fall back to the repo defaults)
+    local sso_profile="sso-profile" region="us-west-2"
+    if [[ -f "$parent_dir/.envrc" ]]; then
+        local v
+        v=$(grep -E '^SSO_PROFILE=' "$parent_dir/.envrc" | head -1 | sed -E 's/^SSO_PROFILE="?([^"[:space:]]*)"?.*/\1/'); [[ -n "$v" ]] && sso_profile="$v"
+        v=$(grep -E '^export TF_VAR_region=' "$parent_dir/.envrc" | head -1 | sed -E 's/^export TF_VAR_region="?([^"[:space:]]*)"?.*/\1/'); [[ -n "$v" ]] && region="$v"
+    fi
+
+    # Target: sibling of the parent, named <parent>-<node_name>
+    local target_dir="${parent_dir}-${NODE_NAME}"
+    local target_rel="${target_dir#"$ENVIRONMENTS_DIR"/}"
+    [[ -e "$target_dir" ]] && die "Target already exists: environments/$target_rel (refusing to overwrite)"
+
+    # Depth-dependent relative paths (environments/X -> ../.. ; environments/sub/X -> ../../..)
+    local depth ups="" i
+    depth=$(awk -F/ '{print NF}' <<<"$target_rel")
+    for ((i = 0; i <= depth; i++)); do ups+="../"; done
+    local repo_root_rel="${ups%/}"
+
+    local ami_name="${AMI_NAMES[$AMI_IDX]}" ami_owner="${AMI_OWNERS[$AMI_IDX]}" ami_filter="${AMI_FILTERS[$AMI_IDX]}" ami_user="${AMI_USERS[$AMI_IDX]}" ami_match="${AMI_MATCHES[$AMI_IDX]}"
+
+    echo
+    echo -e "${CYAN}📋 Summary:${NC}"
+    echo -e "  ${PURPLE}Parent Env:${NC} environments/$parent_rel"
+    echo -e "  ${PURPLE}Parent Prefix:${NC} $parent_prefix"
+    echo -e "  ${PURPLE}Parent Subnet:${NC} $parent_subnet ($parent_az)"
+    echo -e "  ${PURPLE}Target Path:${NC} environments/$target_rel"
+    echo -e "  ${PURPLE}Node Name:${NC} ${parent_prefix}-${NODE_NAME}"
+    echo -e "  ${PURPLE}Hostname:${NC} $NODE_HOSTNAME"
+    echo -e "  ${PURPLE}Instance Type:${NC} $INSTANCE_TYPE (on-demand, x86_64)"
+    echo -e "  ${PURPLE}AMI:${NC} $ami_name"
+    echo -e "  ${PURPLE}AMI Filter:${NC} $ami_filter ${CYAN}(match: $ami_match)${NC}"
+    echo -e "  ${PURPLE}Username:${NC} $ami_user"
+    echo -e "  ${PURPLE}Region / SSO:${NC} $region / $sso_profile"
+    echo -e "  ${PURPLE}IAM:${NC} SSM-only role ${parent_prefix}-${NODE_NAME}-ssm"
+    case "$OLLAMA_ACCESS" in
+        tunnel)     echo -e "  ${PURPLE}Security Group:${NC} parent's only; Ollama loopback, tunnel access" ;;
+        vpc)        echo -e "  ${PURPLE}Security Group:${NC} parent's only; Ollama on 0.0.0.0 for VPC clients" ;;
+        vpc+laptop) echo -e "  ${PURPLE}Security Group:${NC} parent's + sidecar SG (11434 from this laptop's /32); Ollama on 0.0.0.0" ;;
+    esac
+    echo -e "  ${PURPLE}Ollama Access:${NC} $OLLAMA_ACCESS"
+    echo -e "  ${PURPLE}Private IP:${NC} ${PRIVATE_IP:-DHCP (changes on rebuild)}"
+    echo
+
+    if [[ $ASSUME_YES -ne 1 ]]; then
+        local action
+        echo -e "${YELLOW}Actions:${NC}"
+        echo -e "  ${GREEN}[c]${NC} Create sidecar directory ${PURPLE}(default)${NC}"
+        echo -e "  ${GREEN}[q]${NC} Quit"
+        prompt "Choose action [c/q] (default: c): "
+        action="$REPLY"
+        case "${action:-c}" in
+            c|C) ;;
+            *) echo -e "${YELLOW}👋 Nothing created.${NC}"; exit 0 ;;
+        esac
+    fi
+
+    echo -e "${BLUE}📁 Copying template to environments/$target_rel ...${NC}"
+    cp -r "$TEMPLATE_DIR" "$target_dir"
+
+    local envrc="$target_dir/.envrc"
+    replace_placeholder "$envrc" "__ENV_PATH__" "environments/$target_rel"
+    replace_placeholder "$envrc" "__PARENT_ENV_DIR__" "../$parent_base"
+    replace_placeholder "$envrc" "__NODE_NAME__" "$NODE_NAME"
+    replace_placeholder "$envrc" "__INSTANCE_TYPE__" "$INSTANCE_TYPE"
+    replace_placeholder "$envrc" "__HOSTNAME__" "$NODE_HOSTNAME"
+    replace_placeholder "$envrc" "__OLLAMA_ACCESS__" "$OLLAMA_ACCESS"
+    replace_placeholder "$envrc" "__PRIVATE_IP__" "$PRIVATE_IP"
+    replace_placeholder "$envrc" "__AMI_NAME__" "$ami_name"
+    replace_placeholder "$envrc" "__AMI_OWNER__" "$ami_owner"
+    replace_placeholder "$envrc" "__AMI_FILTER__" "$ami_filter"
+    replace_placeholder "$envrc" "__AMI_MATCH__" "$ami_match"
+    replace_placeholder "$envrc" "__DEFAULT_USERNAME__" "$ami_user"
+    replace_placeholder "$envrc" "__SSO_PROFILE__" "$sso_profile"
+    replace_placeholder "$envrc" "__REGION__" "$region"
+    replace_placeholder "$envrc" "__REPO_ROOT_RELPATH__" "$repo_root_rel"
+
+    # Module source depth (template is written for environments/<dir>)
+    local main_tf="$target_dir/main.tf"
+    sed -i.bak "s|source = \"../../modules/|source = \"${ups}modules/|g" "$main_tf"
+    rm -f "$main_tf.bak"
+
+    # Region default in variables.tf follows the parent
+    sed -i.bak "s|default     = \"us-west-2\"|default     = \"$region\"|" "$target_dir/variables.tf"
+    rm -f "$target_dir/variables.tf.bak"
+
+    # No placeholder may survive
+    if grep -rn '__[A-Z_]*__' "$target_dir" --include='*' -l | grep -q .; then
+        grep -rn '__[A-Z_]*__' "$target_dir" >&2
+        die "Internal error: unreplaced placeholders remain in environments/$target_rel"
+    fi
+
+    echo -e "${GREEN}✅ Created environments/$target_rel${NC}"
+
+    if [[ $RUN_CHECK -eq 1 ]]; then
+        run_checks "$region" "$parent_az" "$INSTANCE_TYPE" "$sso_profile" "$parent_subnet" "$PRIVATE_IP"
+    fi
+
+    echo
+    echo -e "${CYAN}Next steps (Terraform only; no apply is performed by this script):${NC}"
+    echo -e "  cd environments/$target_rel"
+    echo -e "  direnv allow"
+    echo -e "  terraform init"
+    echo -e "  terraform plan -out=gpu.tfplan     ${PURPLE}# expect 4 to add, 0 to change, 0 to destroy${NC}"
+    echo
+    echo -e "${PURPLE}Notes:${NC}"
+    echo -e "  - Destroy this sidecar before destroying the parent environment."
+    echo -e "  - Stop/start the node outside Terraform; its public IP changes on every start."
+    echo -e "  - The GPU image ships the NVIDIA driver, nvidia-smi, nvtop, and Ollama; the plain agentic image needs them by hand."
+    echo -e "  - Ollama exposure is '$OLLAMA_ACCESS'; change OLLAMA_ACCESS in .envrc and re-plan to alter it."
+    echo -e "  - Aliases (zsh dotenv, accept the .env prompt): lw, lssh, lcopyto, lcopyfrom, istate, istart, istop, lssm, lnvidia, lnvtop, lpair."
+    if [[ "$OLLAMA_ACCESS" == "vpc+laptop" ]]; then
+        echo -e "  - OLLAMA_HOST is exported by direnv while the node runs (ollama CLI / SDKs on this machine use the L4 directly)."
+    fi
+    echo -e "  - Run 'lpair' once (before apply is best): it saves the parent host's key to paired_keys.pub so the node trusts it"
+    echo -e "    from first boot, and writes 'Host gpu' + /etc/hosts on the parent host."
+}
+
+main "$@"

@@ -72,6 +72,7 @@ environments/*/
 !environments/TEMPLATE-README.md
 !environments/AUTO-SPOT-CHECK.md
 !environments/multi-os-sample/
+!environments/gpu-node-sample/
 # SynxData Labs internal content - never commit
 *synx*
 AWS-MARKETPLACE-CONTEXT.md

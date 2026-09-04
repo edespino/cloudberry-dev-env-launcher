@@ -165,12 +165,44 @@ You'll see which files were loaded and the available options.
 - **AMI not found**: Test filter with AWS CLI
 - **SSH fails**: Verify username matches AMI default
 
+## GPU Node Images (`gpu-config-*.yaml`)
+
+`bin/gpu-node` scaffolds a GPU sidecar next to an existing environment and picks
+its AMI from `config/gpu-config-*.yaml` first, then from the x86_64 entries of
+`config/os-config-*.yaml`. The different prefix is deliberate: `os-selector`
+loads only `os-config-*.yaml`, so GPU images are never offered for database
+nodes and no os-selector change is needed.
+
+Entries use the same six fields as `os-config-*.yaml` plus one optional field:
+
+| Field | Values | Meaning |
+|-------|--------|---------|
+| `ami_match` | `name` (default) | newest AMI whose **name** matches `ami_filter` |
+| | `passed-tag` | newest AMI whose **Name tag** matches `<ami_filter>-PASSED` |
+
+The image factory records PASSED/FAILED on the AMI's Name tag and never renames
+the AMI, so a name-based "latest" can select a build that failed its tests. GPU
+images use `passed-tag`. Example:
+
+```yaml
+os_options:
+  ubuntu26-gpu:
+    name: "Ubuntu 26.04 - Agentic GPU (NVIDIA L4 driver, nvidia-smi, nvtop, Ollama)"
+    group: "Agentic - GPU Packer AMIs"
+    ami_owner: "<image-factory account>"
+    ami_filter: "agentic-packer-ubuntu26-gpu-*"
+    ami_match: "passed-tag"
+    username: "ubuntu"
+    dir_name: "ubuntu26-gpu"
+```
+
 ## File Structure
 
 ```
 config/
 ├── README.md                          # This documentation
-├── os-config-base.yaml                # Base configuration (loaded)
+├── os-config-base.yaml                # Base configuration (loaded by os-selector and bin/gpu-node)
+├── gpu-config-agentic.yaml            # GPU node images (loaded by bin/gpu-node only)
 ├── os-config.yaml.example-extended    # Extended YAML example (not loaded)
 └── os-config.sh.example               # Legacy bash example (not loaded)
 ```
