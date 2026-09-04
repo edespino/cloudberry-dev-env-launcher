@@ -1,0 +1,29 @@
+# GPU node images, consumed by bin/gpu-node only.
+#
+# This file deliberately uses the gpu-config-*.yaml prefix: os-selector loads
+# config/os-config-*.yaml, so GPU images are never offered for database nodes.
+# bin/gpu-node loads gpu-config-*.yaml first (defaults come from here), then the
+# x86_64 entries of os-config-*.yaml as alternatives.
+#
+# ami_match:
+#   name        newest AMI whose *name* matches ami_filter (os-config default)
+#   passed-tag  newest AMI whose Name *tag* matches "<ami_filter>-PASSED".
+#               The image factory records PASSED/FAILED on the Name tag and
+#               never renames the AMI, so a name-based "latest" can select a
+#               build that failed its tests. GPU builds carry that risk (the
+#               build-time nvidia-smi/Ollama smoke test can fail), so they
+#               match on the tag.
+
+os_options:
+  # ----------------------------------------------------------------------
+  # Agentic GPU Packer custom AMIs (x86_64; the g6 family has no arm64)
+  # ----------------------------------------------------------------------
+
+  ubuntu26-gpu:
+    name: "Ubuntu 26.04 - Agentic GPU (NVIDIA L4 driver, nvidia-smi, nvtop, Ollama)"
+    group: "Agentic - GPU Packer AMIs"
+    ami_owner: "703671893074"
+    ami_filter: "agentic-packer-ubuntu26-gpu-*"
+    ami_match: "passed-tag"
+    username: "ubuntu"
+    dir_name: "ubuntu26-gpu"
