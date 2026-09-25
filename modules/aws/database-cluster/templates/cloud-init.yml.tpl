@@ -3,9 +3,10 @@ hostname: "HOSTNAME_PLACEHOLDER"
 fqdn: "HOSTNAME_PLACEHOLDER"
 manage_etc_hosts: false
 
-# Create scripts for database cluster setup
+# Create scripts for database cluster setup. Staged under /var/lib, not /tmp:
+# some distros mount a fresh tmpfs on /tmp during boot.
 write_files:
-  - path: /tmp/setup-hosts.sh
+  - path: /var/lib/launcher-cloud-init/setup-hosts.sh
     permissions: "0755"
     content: |
       #!/bin/bash
@@ -13,10 +14,10 @@ write_files:
       
       # Get this instance's private IP and instance ID (IMDSv2: token first;
       # works whether the instance requires IMDSv2 or merely allows it)
-      IMDS_TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token \
+      IMDS_TOKEN=$(curl -s --connect-timeout 2 --max-time 5 -X PUT http://169.254.169.254/latest/api/token \
         -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
       imds() {
-        curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" "http://169.254.169.254/latest/meta-data/$1"
+        curl -s --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" "http://169.254.169.254/latest/meta-data/$1"
       }
       PRIVATE_IP=$(imds local-ipv4)
       INSTANCE_ID=$(imds instance-id)
@@ -107,20 +108,39 @@ write_files:
         return 1
       }
       
-      # Install AWS CLI if not present (for Oracle Linux)
-      if ! command -v aws &> /dev/null; then
-        echo "Installing AWS CLI..."
-        dnf install -y awscli
+      # A single node has no peers to discover
+      if [ ${vm_count} -eq 1 ]; then
+        echo "Single node: adding only this instance to hosts file"
+        echo "$PRIVATE_IP HOSTNAME_PLACEHOLDER" >> /etc/hosts
+        echo "Final hosts file:"
+        cat /etc/hosts
+        exit 0
       fi
-      
+
+      # Multi-node discovery needs the AWS CLI. Stock images may lack it; the
+      # dnf fallback covers RPM distros whose repos carry it (e.g. Oracle Linux).
+      if ! command -v aws &> /dev/null && command -v dnf &> /dev/null; then
+        echo "Installing AWS CLI..."
+        dnf install -y awscli || true
+      fi
+      if ! command -v aws &> /dev/null; then
+        echo "AWS CLI not available: multi-node discovery skipped; adding only this instance to hosts file"
+        echo "$PRIVATE_IP HOSTNAME_PLACEHOLDER" >> /etc/hosts
+        echo "Final hosts file:"
+        cat /etc/hosts
+        exit 0
+      fi
+
       # Try to discover cluster members
       discover_cluster_members
       
       echo "Final hosts file:"
       cat /etc/hosts
-  - path: /home/${default_username}/.ssh/config
-    permissions: "0600"
-    owner: ${default_username}:${default_username}
+  # Staged here and installed by runcmd: write_files runs before cloud-init
+  # creates the default user on stock images, and an unknown owner aborts every
+  # file after it.
+  - path: /var/lib/launcher-cloud-init/cluster-ssh-config
+    permissions: "0644"
     content: |
       # SSH config for cluster communication - skip host key checking for internal IPs
       Host 10.0.*
@@ -133,7 +153,7 @@ write_files:
           StrictHostKeyChecking no
           UserKnownHostsFile /dev/null
           LogLevel QUIET
-  - path: /var/lib/cloud/scripts/per-instance/setup-disks.sh
+  - path: /var/lib/launcher-cloud-init/setup-disks.sh
     permissions: "0755"
     content: |
       #!/bin/bash
@@ -157,10 +177,14 @@ write_files:
             mkfs.xfs "$device"
           fi
 
-          # Create mount point and mount the disk
+          # Create mount point, persist it across stop/start, and mount the disk
           mkdir -p "$mount_point"
+          uuid=$(blkid -s UUID -o value "$device")
+          if [ -n "$uuid" ] && ! grep -q "$uuid" /etc/fstab; then
+            echo "UUID=$uuid $mount_point xfs defaults,nofail 0 2" >> /etc/fstab
+          fi
           echo "Mounting $device at $mount_point" >> $LOG_FILE
-          mount "$device" "$mount_point"
+          mountpoint -q "$mount_point" || mount "$device" "$mount_point"
           chown ${default_username}:${default_username} "$mount_point"
           chmod 777 "$mount_point"
         else
@@ -170,8 +194,11 @@ write_files:
 
 packages:
   - jq
+  - xfsprogs
 
-# Execute setup scripts
+# Execute setup scripts (final stage: the default user exists by now)
 runcmd:
-  - /tmp/setup-hosts.sh
-  - /var/lib/cloud/scripts/per-instance/setup-disks.sh
+  - /var/lib/launcher-cloud-init/setup-hosts.sh
+  - /var/lib/launcher-cloud-init/setup-disks.sh
+  - install -d -m 0700 -o ${default_username} -g ${default_username} /home/${default_username}/.ssh
+  - install -m 0600 -o ${default_username} -g ${default_username} /var/lib/launcher-cloud-init/cluster-ssh-config /home/${default_username}/.ssh/config
