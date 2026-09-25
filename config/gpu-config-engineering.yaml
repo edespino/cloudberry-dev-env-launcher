@@ -1,6 +1,20 @@
-# Engineering-account GPU images, consumed by bin/gpu-node only (see
-# gpu-config-agentic.yaml for ami_match). Account values come from
-# .envrc.local (LAUNCHER_ENG_ACCOUNT_ID, LAUNCHER_ENG_SSO_PROFILE).
+# Engineering-account GPU images, consumed by bin/gpu-node only. Account
+# values come from .envrc.local (LAUNCHER_ENG_ACCOUNT_ID,
+# LAUNCHER_ENG_SSO_PROFILE).
+#
+# This file deliberately uses the gpu-config-*.yaml prefix: os-selector loads
+# config/os-config-*.yaml, so GPU images are never offered for database nodes.
+# bin/gpu-node loads gpu-config-*.yaml first (defaults come from here), then the
+# x86_64 entries of os-config-*.yaml as alternatives.
+#
+# ami_match:
+#   name        newest AMI whose *name* matches ami_filter (os-config default)
+#   passed-tag  newest AMI whose Name *tag* matches "<ami_filter>-PASSED".
+#               The image factory records PASSED/FAILED on the Name tag and
+#               never renames the AMI, so a name-based "latest" can select a
+#               build that failed its tests. GPU builds carry that risk (the
+#               build-time nvidia-smi/Ollama smoke test can fail), so they
+#               match on the tag.
 #
 # sso_profile binds an entry to that account: gpu-node offers it only for a
 # parent environment using the same SSO profile. passed-tag works here because

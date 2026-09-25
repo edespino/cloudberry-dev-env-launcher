@@ -10,9 +10,9 @@
 #
 # Usage:
 #   bin/gpu-node                      interactive
-#   bin/gpu-node --parent environments/synx/ubuntu26-arm64-agentic \
+#   bin/gpu-node --parent environments/<env> \
 #                --node-name gpu-l4 --instance-type g6.2xlarge \
-#                --ami ubuntu26-agentic --yes
+#                --ami ubuntu26-agentic-eng --yes
 #   bin/gpu-node ... --check          also run read-only AZ offering + quota checks
 #
 
@@ -48,7 +48,7 @@ ALLOWED_INSTANCE_SPECS=(
 )
 DEFAULT_NODE_NAME="gpu-l4"
 DEFAULT_HOSTNAME="gpu"
-DEFAULT_AMI_KEY="ubuntu26-gpu"
+DEFAULT_AMI_KEY="ubuntu26-gpu-eng"
 OLLAMA_ACCESS_MODES=("tunnel" "vpc" "vpc+laptop")
 OLLAMA_ACCESS_DESCS=(
     "Ollama on 127.0.0.1 only; laptop and cdw use ssh -L 11434:127.0.0.1:11434 (default)"
