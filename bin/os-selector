@@ -740,12 +740,11 @@ alias lssh2='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_usernam
 # Port forward for omnigent (local 6767 -> remote 127.0.0.1:6767)
 alias log='echo "omnigent: http://127.0.0.1:6767" && ssh "\${SSH_OPTS[@]}" -L 6767:127.0.0.1:6767 -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\$(get_ssh_host 0) -A'
 
-# Attach to a Herdr session on instance 0.
-# Requires: herdr installed on the remote host, and a one-time
-# "Include ~/.ssh/launcher.d/*.conf" line at the top of ~/.ssh/config.
-# herdr --remote resolves its target through ~/.ssh/config, so the generated
-# key and host-key options are written to a per-environment Host entry first.
-alias lherdr='_lherdr() {
+# Write ~/.ssh/launcher.d/<env_prefix>.conf: a Host entry for instance 0 that
+# herdr --remote and VS Code Remote-SSH resolve through ~/.ssh/config (needs a
+# one-time "Include ~/.ssh/launcher.d/*.conf" line at the top of ~/.ssh/config).
+# In ssm mode the entry carries the Session Manager ProxyCommand.
+write_launcher_ssh_config() {
   local ip; ip=\$(get_ssh_host 0) || return 1
   local proxy=""
   if [[ "\${TF_VAR_access_mode:-ssh}" == "ssm" ]]; then
@@ -766,8 +765,10 @@ Host \${TF_VAR_env_prefix}
   StrictHostKeyChecking no
   UserKnownHostsFile /dev/null
 CFG
-  herdr --remote "\${TF_VAR_env_prefix}"
-}; _lherdr'
+}
+
+# Attach to a Herdr session on instance 0 (requires herdr on the remote host).
+alias lherdr='write_launcher_ssh_config && herdr --remote "\${TF_VAR_env_prefix}"'
 
 # Hermes web dashboard on instance 0, reached only through an SSH tunnel
 # (dashboard binds 127.0.0.1:9119 on the host; no SG port is opened).
@@ -1024,9 +1025,9 @@ create_user_vscode_aliases() {
   # VS Code remote with error handling
   alias \${prefix}code='function _'\${prefix}'code() {
     local rpath="\${1:-/home/'\$username'}"
-    local hostname=\$(get_ssh_host 0)
-    if [[ -n "\$hostname" && "\$hostname" != "None" ]]; then
-      echo "🔗 Opening VS Code remote to \${hostname}:\${rpath}"
+    # Remote-SSH connects through the env-prefix Host entry (IP or ssm)
+    if write_launcher_ssh_config; then
+      echo "🔗 Opening VS Code remote to \${TF_VAR_env_prefix}:\${rpath}"
       /Applications/Visual\\ Studio\\ Code.app/Contents/Resources/app/bin/code --remote "ssh-remote+\${TF_VAR_env_prefix}" "\$rpath"
     else
       echo "❌ Cannot connect - instance not running"
