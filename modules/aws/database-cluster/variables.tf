@@ -36,9 +36,32 @@ variable "my_ip" {
 }
 
 variable "allow_remote_ssh_access" {
-  description = "Allow SSH access from anywhere (0.0.0.0/0) for remote team access"
+  description = "Allow SSH access from anywhere (0.0.0.0/0) for remote team access. Ignored when access_mode = \"ssm\" (no SSH ingress at all)."
   type        = bool
   default     = false
+}
+
+variable "access_mode" {
+  description = "How the laptop reaches instances: \"ssh\" (port 22 and my_ip ingress; legacy default) or \"ssm\" (Session Manager only: no laptop ingress, AmazonSSMManagedInstanceCore attached)"
+  type        = string
+  default     = "ssh"
+
+  validation {
+    condition     = contains(["ssh", "ssm"], var.access_mode)
+    error_message = "access_mode must be \"ssh\" or \"ssm\"."
+  }
+}
+
+variable "owner_tag" {
+  description = "Owner tag value (founder email). Empty omits the tag."
+  type        = string
+  default     = ""
+}
+
+variable "environment_tag" {
+  description = "Environment tag value. Empty keeps the legacy value, env_prefix."
+  type        = string
+  default     = ""
 }
 
 variable "default_username" {

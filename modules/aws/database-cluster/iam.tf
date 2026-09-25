@@ -68,10 +68,32 @@ resource "aws_iam_role_policy" "s3_read_write" {
   })
 }
 
+# Session Manager (ssm access mode only)
+resource "aws_iam_role_policy_attachment" "ssm_managed_instance_core" {
+  count      = local.ssm_only ? 1 : 0
+  role       = aws_iam_role.ec2_cluster_discovery.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
 # IAM Instance Profile
 resource "aws_iam_instance_profile" "ec2_cluster_discovery" {
   name = "${var.env_prefix}-ec2-cluster-discovery"
   role = aws_iam_role.ec2_cluster_discovery.name
 
   tags = local.common_tags
+}
+
+# A newly created instance profile can take seconds to propagate. An instance
+# launched before then boots without role credentials, and its SSM agent may
+# not recover until reboot. ssm mode only.
+resource "null_resource" "instance_profile_propagation" {
+  count = local.ssm_only ? 1 : 0
+
+  triggers = {
+    instance_profile = aws_iam_instance_profile.ec2_cluster_discovery.arn
+  }
+
+  provisioner "local-exec" {
+    command = "sleep 20"
+  }
 }

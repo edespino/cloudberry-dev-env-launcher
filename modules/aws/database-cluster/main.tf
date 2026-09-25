@@ -20,10 +20,15 @@ locals {
 
   # Combined tags
   common_tags = merge(var.additional_tags, {
-    Environment = var.env_prefix
+    Environment = var.environment_tag != "" ? var.environment_tag : var.env_prefix
     ManagedBy   = "Terraform"
     Module      = "database-cluster"
-  })
+  }, var.owner_tag != "" ? { Owner = var.owner_tag } : {})
+
+  # Session Manager mode: no laptop-facing ingress; intra-VPC rules only
+  ssm_only       = var.access_mode == "ssm"
+  laptop_cidrs   = local.ssm_only ? [] : ["${var.my_ip}/32"]
+  app_port_cidrs = concat(local.laptop_cidrs, ["10.0.0.0/16"])
 
   # Cloud-init configuration
   cloud_init_content = var.cloud_init_template != null ? file(var.cloud_init_template) : templatefile("${path.module}/templates/cloud-init.yml.tpl", {

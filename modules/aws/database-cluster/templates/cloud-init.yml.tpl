@@ -11,10 +11,16 @@ write_files:
       #!/bin/bash
       # Build hosts file for database cluster with actual IPs
       
-      # Get this instance's private IP and instance ID
-      PRIVATE_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
-      INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
-      REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region)
+      # Get this instance's private IP and instance ID (IMDSv2: token first;
+      # works whether the instance requires IMDSv2 or merely allows it)
+      IMDS_TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token \
+        -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
+      imds() {
+        curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" "http://169.254.169.254/latest/meta-data/$1"
+      }
+      PRIVATE_IP=$(imds local-ipv4)
+      INSTANCE_ID=$(imds instance-id)
+      REGION=$(imds placement/region)
       
       # Create basic hosts file with localhost entries
       cat > /etc/hosts << EOF

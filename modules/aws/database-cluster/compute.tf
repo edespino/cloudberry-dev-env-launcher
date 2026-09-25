@@ -54,7 +54,14 @@ resource "aws_instance" "database_instances" {
     SpotStrategy = var.spot_instance_strategy
   })
 
-  depends_on = [aws_placement_group.cluster]
+  # cloud-init consumes user_data once, at first boot. Pushing a changed
+  # template to a running instance would only stop/start it; new instances
+  # pick up template changes.
+  lifecycle {
+    ignore_changes = [user_data]
+  }
+
+  depends_on = [aws_placement_group.cluster, null_resource.instance_profile_propagation]
 }
 
 # EBS Data Volumes
