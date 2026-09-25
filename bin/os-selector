@@ -12,6 +12,14 @@ REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 ENVIRONMENTS_DIR="$REPO_ROOT/environments"
 TEMPLATE_DIR="$ENVIRONMENTS_DIR/multi-os-sample"
 
+# Account-specific values (AWS account IDs, SSO profiles, owner email) are
+# never committed. They live in the gitignored .envrc.local (see
+# .envrc.example); config/*.yaml refers to them as "${VAR}".
+if [[ -f "$REPO_ROOT/.envrc.local" ]]; then
+    # shellcheck disable=SC1091
+    source "$REPO_ROOT/.envrc.local"
+fi
+
 # Initialize empty arrays - defaults will be loaded from config
 declare -A OS_OPTIONS
 declare -A OS_GROUPS
@@ -20,7 +28,11 @@ declare -A AMI_FILTERS
 declare -A DEFAULT_USERNAMES
 declare -A DIR_NAMES
 declare -A OS_ARCHES
+declare -A SSO_PROFILES
+declare -A ACCESS_MODES
+declare -A ENV_TAGS
 declare -A SELECTION_MAP
+declare -a SKIPPED_ENTRIES=()
 
 # Colors for output
 RED='\033[0;31m'
@@ -158,6 +170,20 @@ read_optional_field() {
     fi
 }
 
+# Resolve a whole-value "${VAR}" config reference from the environment
+# (.envrc.local). Prints the value unchanged when it is not a reference;
+# returns 1 when the referenced variable is unset or empty.
+expand_config_value() {
+    local value="$1"
+    if [[ "$value" =~ ^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$ ]]; then
+        local name="${BASH_REMATCH[1]}"
+        [[ -n "${!name:-}" ]] || return 1
+        printf '%s\n' "${!name}"
+    else
+        printf '%s\n' "$value"
+    fi
+}
+
 # Function to load all YAML configurations matching pattern
 load_yaml_config() {
     local config_pattern="$REPO_ROOT/config/os-config-*.yaml"
@@ -213,9 +239,19 @@ load_yaml_config() {
             fi
             groups_seen["$group"]="$config_file"
 
+            # Account-specific fields may reference .envrc.local variables;
+            # an entry whose variable is unset is hidden, not fatal.
+            local raw_owner owner raw_profile profile
+            raw_owner=$(read_required_field "$config_file" "$key" "ami_owner") || exit 1
+            raw_profile=$(read_optional_field "$config_file" "$key" "sso_profile" "") || exit 1
+            if ! owner=$(expand_config_value "$raw_owner") || ! profile=$(expand_config_value "$raw_profile"); then
+                SKIPPED_ENTRIES+=("$key")
+                continue
+            fi
+
             OS_OPTIONS["$key"]=$(read_required_field "$config_file" "$key" "name") || exit 1
             OS_GROUPS["$key"]="$group"
-            AMI_OWNERS["$key"]=$(read_required_field "$config_file" "$key" "ami_owner") || exit 1
+            AMI_OWNERS["$key"]="$owner"
             AMI_FILTERS["$key"]=$(read_required_field "$config_file" "$key" "ami_filter") || exit 1
             DEFAULT_USERNAMES["$key"]=$(read_required_field "$config_file" "$key" "username") || exit 1
             DIR_NAMES["$key"]=$(read_required_field "$config_file" "$key" "dir_name") || exit 1
@@ -229,8 +265,23 @@ load_yaml_config() {
                 exit 1
             fi
             OS_ARCHES["$key"]="$arch"
+
+            # Optional account settings (empty keeps the template defaults:
+            # SSO_PROFILE="sso-profile", access_mode "ssh", Environment tag = env_prefix)
+            SSO_PROFILES["$key"]="$profile"
+            ACCESS_MODES["$key"]=$(read_optional_field "$config_file" "$key" "access_mode" "") || exit 1
+            if [[ -n "${ACCESS_MODES[$key]}" && "${ACCESS_MODES[$key]}" != "ssh" && "${ACCESS_MODES[$key]}" != "ssm" ]]; then
+                echo -e "${RED}❌ Error: os_options.$key.access_mode must be 'ssh' or 'ssm' (got '${ACCESS_MODES[$key]}') in $config_file${NC}" >&2
+                exit 1
+            fi
+            ENV_TAGS["$key"]=$(read_optional_field "$config_file" "$key" "environment_tag" "") || exit 1
         done
     done
+
+    if [[ ${#SKIPPED_ENTRIES[@]} -gt 0 ]]; then
+        echo -e "${YELLOW}ℹ️  ${#SKIPPED_ENTRIES[@]} OS option(s) hidden: they reference variables not set in .envrc.local (copy .envrc.example)${NC}" >&2
+        [[ "$DEBUG" == "1" ]] && echo -e "${YELLOW}   ${SKIPPED_ENTRIES[*]}${NC}" >&2
+    fi
 
     if [[ "$DEBUG" == "1" ]]; then
         echo -e "${GREEN}✅ All configurations loaded successfully!${NC}"
@@ -348,6 +399,8 @@ show_configuration() {
     echo -e "  ${PURPLE}AMI Owner:${NC} $ami_owner"
     echo -e "  ${PURPLE}AMI Filter:${NC} $ami_filter"
     echo -e "  ${PURPLE}Default Username:${NC} $username"
+    [[ -n "${SSO_PROFILES[$actual_key]}" ]] && echo -e "  ${PURPLE}SSO Profile:${NC} ${SSO_PROFILES[$actual_key]}"
+    [[ -n "${ACCESS_MODES[$actual_key]}" ]] && echo -e "  ${PURPLE}Access Mode:${NC} ${ACCESS_MODES[$actual_key]}"
     echo
 }
 
@@ -367,6 +420,24 @@ replace_placeholder() {
         echo -e "${RED}❌ Internal error: placeholder $placeholder still present in $file after substitution${NC}" >&2
         exit 1
     fi
+}
+
+# Replace one exact line in a file. Fails loudly if the line is absent.
+set_template_line() {
+    local file="$1"
+    local old_line="$2"
+    local new_line="$3"
+    if ! grep -qxF "$old_line" "$file"; then
+        echo -e "${RED}❌ Internal error: line not found in $file: $old_line${NC}" >&2
+        exit 1
+    fi
+    OLD_LINE="$old_line" NEW_LINE="$new_line" python3 -c '
+import os, sys
+p = sys.argv[1]
+old, new = os.environ["OLD_LINE"], os.environ["NEW_LINE"]
+lines = open(p).read().split("\n")
+open(p, "w").write("\n".join(new if l == old else l for l in lines))
+' "$file"
 }
 
 # Function to create environment directory
@@ -459,6 +530,24 @@ export TF_VAR_default_username="'"$username"'"\
         }' "$envrc_file"
 
         rm -f "$envrc_file.tmp"
+
+        # Account settings from the OS entry (sso_profile, access_mode,
+        # environment_tag). Owner tag comes from LAUNCHER_OWNER_TAG if set.
+        local sso_profile="${SSO_PROFILES[$actual_key]}"
+        local access_mode="${ACCESS_MODES[$actual_key]}"
+        local env_tag="${ENV_TAGS[$actual_key]}"
+        if [[ -n "$sso_profile" ]]; then
+            set_template_line "$envrc_file" 'SSO_PROFILE="sso-profile"' "SSO_PROFILE=\"$sso_profile\""
+        fi
+        if [[ -n "$access_mode" ]]; then
+            set_template_line "$envrc_file" 'export TF_VAR_access_mode="ssh"' "export TF_VAR_access_mode=\"$access_mode\""
+        fi
+        if [[ -n "$env_tag" ]]; then
+            set_template_line "$envrc_file" 'export TF_VAR_environment_tag=""    # Environment tag; empty keeps env_prefix' "export TF_VAR_environment_tag=\"$env_tag\""
+        fi
+        if [[ -n "${LAUNCHER_OWNER_TAG:-}" ]]; then
+            set_template_line "$envrc_file" 'export TF_VAR_owner_tag=""          # Owner tag (e.g. your email); empty omits it' "export TF_VAR_owner_tag=\"$LAUNCHER_OWNER_TAG\""
+        fi
     fi
 
     # Update main.tf module path for subdirectories
@@ -531,6 +620,54 @@ get_instance_ip() {
   fi
 }
 
+# Instance ID lookup (Session Manager target)
+get_instance_id() {
+  local instance_index="\${1:-0}"
+  local id=\$(aws ec2 describe-instances --region "\$TF_VAR_region" \\
+    --filters "Name=tag:Name,Values=\${TF_VAR_env_prefix}-instance-\${instance_index}" \\
+              "Name=instance-state-name,Values=running" \\
+    --query "Reservations[*].Instances[*].InstanceId" \\
+    --output text 2>/dev/null | head -n1)
+
+  if [[ -n "\$id" && "\$id" != "None" ]]; then
+    echo "\$id"
+  else
+    echo "❌ No running instance found for \${TF_VAR_env_prefix}-instance-\${instance_index}" >&2
+    return 1
+  fi
+}
+
+# Route ssh to EC2 instance IDs through Session Manager. Written once to
+# ~/.ssh/launcher.d/ (needs the "Include ~/.ssh/launcher.d/*.conf" line at the
+# top of ~/.ssh/config, the same line lherdr needs). IP targets are unaffected.
+# The profile comes from LAUNCHER_SSO_PROFILE (exported by the env's .envrc)
+# at connect time; lherdr stanzas carry their own profile.
+ensure_ssm_ssh_config() {
+  local f=~/.ssh/launcher.d/00-ssm.conf
+  if [[ ! -f "\$f" ]]; then
+    mkdir -p ~/.ssh/launcher.d
+    cat > "\$f" <<'SSMCFG'
+# Written by cloudberry-dev-env-launcher: ssh to EC2 instance IDs via Session Manager
+Host i-* mi-*
+  ProxyCommand sh -c "aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p --profile \${LAUNCHER_SSO_PROFILE:?LAUNCHER_SSO_PROFILE not set} --region \${TF_VAR_region:-us-west-2}"
+SSMCFG
+  fi
+  if ! grep -qs 'launcher.d/\*.conf' ~/.ssh/config; then
+    echo "⚠️  Add 'Include ~/.ssh/launcher.d/*.conf' at the top of ~/.ssh/config" >&2
+  fi
+}
+
+# SSH target for instance N: public IP (access_mode ssh) or instance ID
+# (access_mode ssm, reached through ensure_ssm_ssh_config's ProxyCommand)
+get_ssh_host() {
+  if [[ "\${TF_VAR_access_mode:-ssh}" == "ssm" ]]; then
+    ensure_ssm_ssh_config
+    get_instance_id "\$@"
+  else
+    get_instance_ip "\$@"
+  fi
+}
+
 # Function to safely clean IP cache files
 clean_ip_cache() {
   setopt NULL_GLOB 2>/dev/null || true
@@ -545,11 +682,27 @@ wait_for_ssh() {
   local instance_index="\${3:-0}"
   local hostname
 
-  # Retrieve the IP address using cached function
-  hostname=\$(get_instance_ip "\$instance_index")
+  # Retrieve the SSH target (IP, or instance ID in ssm mode)
+  hostname=\$(get_ssh_host "\$instance_index")
 
   if [ -z "\$hostname" ] || [ "\$hostname" = "None" ]; then
     echo "❌ Failed to retrieve IP address for \${env_prefix}-instance-\${instance_index} in region \${region}."
+    return 1
+  fi
+
+  if [[ "\${TF_VAR_access_mode:-ssh}" == "ssm" ]]; then
+    echo "⏳ Waiting for Session Manager registration of \${hostname}..."
+    for ((i=1; i<=30; i++)); do
+      if [[ "\$(aws ssm describe-instance-information --region "\$TF_VAR_region" \\
+            --filters "Key=InstanceIds,Values=\${hostname}" \\
+            --query "InstanceInformationList[0].PingStatus" --output text 2>/dev/null)" == "Online" ]]; then
+        echo "✅ Session Manager is online for \${hostname}"
+        return 0
+      fi
+      echo "⏳ Not registered yet (attempt \$i/30). Retrying..."
+      sleep \$((i*2))
+    done
+    echo "❌ \${hostname} did not register with Session Manager."
     return 1
   fi
 
@@ -594,25 +747,25 @@ create_user_ssh_aliases() {
   alias \${wait_prefix}='wait_for_ssh \${TF_VAR_region} \${TF_VAR_env_prefix}; \\
              ssh "\${SSH_OPTS[@]}" \\
                  -i \${SSH_KEY_PATH} \\
-                 \${TF_VAR_default_username}@\$(get_instance_ip 0) \\
+                 \${TF_VAR_default_username}@\$(get_ssh_host 0) \\
                  "cat ~/.ssh/authorized_keys | sudo tee -a ~'\$username'/.ssh/authorized_keys > /dev/null" && \\
              echo "✅ SSH key copied to '\$username' user"'
 
   # SSH connections for 3 instances
-  alias \${ssh_prefix}ssh='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} '\$username'@\$(get_instance_ip 0) -A'
-  alias \${ssh_prefix}ssh1='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} '\$username'@\$(get_instance_ip 1) -A'
-  alias \${ssh_prefix}ssh2='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} '\$username'@\$(get_instance_ip 2) -A'
+  alias \${ssh_prefix}ssh='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} '\$username'@\$(get_ssh_host 0) -A'
+  alias \${ssh_prefix}ssh1='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} '\$username'@\$(get_ssh_host 1) -A'
+  alias \${ssh_prefix}ssh2='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} '\$username'@\$(get_ssh_host 2) -A'
 
   # File transfer - copy to
   alias \${ssh_prefix}copyto='function _'\${ssh_prefix}'copyto() {
-    echo "📤 Copying \$1 to '\$username'@\$(get_instance_ip 0):\$2"
-    scp "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} "\$1" '\$username'@\$(get_instance_ip 0):"\$2"
+    echo "📤 Copying \$1 to '\$username'@\$(get_ssh_host 0):\$2"
+    scp "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} "\$1" '\$username'@\$(get_ssh_host 0):"\$2"
   }; _'\${ssh_prefix}'copyto'
 
   # File transfer - copy from
   alias \${ssh_prefix}copyfrom='function _'\${ssh_prefix}'copyfrom() {
-    echo "📥 Copying '\$username'@\$(get_instance_ip 0):\$1 to \$2"
-    scp "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} '\$username'@\$(get_instance_ip 0):"\$1" "\$2"
+    echo "📥 Copying '\$username'@\$(get_ssh_host 0):\$1 to \$2"
+    scp "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} '\$username'@\$(get_ssh_host 0):"\$1" "\$2"
   }; _'\${ssh_prefix}'copyfrom'
 }
 
@@ -622,12 +775,12 @@ alias lw1='wait_for_ssh \${TF_VAR_region} \${TF_VAR_env_prefix} 1'
 alias lw2='wait_for_ssh \${TF_VAR_region} \${TF_VAR_env_prefix} 2'
 
 # Default user SSH connections (using cached IPs and timeouts)
-alias lssh='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\$(get_instance_ip 0) -A'
-alias lssh1='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\$(get_instance_ip 1) -A'
-alias lssh2='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\$(get_instance_ip 2) -A'
+alias lssh='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\$(get_ssh_host 0) -A'
+alias lssh1='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\$(get_ssh_host 1) -A'
+alias lssh2='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\$(get_ssh_host 2) -A'
 
 # Port forward for omnigent (local 6767 -> remote 127.0.0.1:6767)
-alias log='echo "omnigent: http://127.0.0.1:6767" && ssh "\${SSH_OPTS[@]}" -L 6767:127.0.0.1:6767 -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\$(get_instance_ip 0) -A'
+alias log='echo "omnigent: http://127.0.0.1:6767" && ssh "\${SSH_OPTS[@]}" -L 6767:127.0.0.1:6767 -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\$(get_ssh_host 0) -A'
 
 # Attach to a Herdr session on instance 0.
 # Requires: herdr installed on the remote host, and a one-time
@@ -635,13 +788,18 @@ alias log='echo "omnigent: http://127.0.0.1:6767" && ssh "\${SSH_OPTS[@]}" -L 67
 # herdr --remote resolves its target through ~/.ssh/config, so the generated
 # key and host-key options are written to a per-environment Host entry first.
 alias lherdr='_lherdr() {
-  local ip; ip=\$(get_instance_ip 0) || return 1
+  local ip; ip=\$(get_ssh_host 0) || return 1
+  local proxy=""
+  if [[ "\${TF_VAR_access_mode:-ssh}" == "ssm" ]]; then
+    proxy="  ProxyCommand sh -c \"aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p --profile \${LAUNCHER_SSO_PROFILE} --region \${TF_VAR_region}\""
+  fi
   mkdir -p ~/.ssh/launcher.d
   cat > ~/.ssh/launcher.d/\${TF_VAR_env_prefix}.conf <<CFG
 Host \${TF_VAR_env_prefix}
   HostName \${ip}
   User \${TF_VAR_default_username}
   IdentityFile \$(cd "\$(dirname "\${SSH_KEY_PATH}")" && pwd)/\$(basename "\${SSH_KEY_PATH}")
+\${proxy}
   ForwardAgent yes
   StrictHostKeyChecking no
   UserKnownHostsFile /dev/null
@@ -686,13 +844,13 @@ alias lhermes='_lhermes() {
     return 1
   fi
 
-  ip=\$(get_instance_ip 0) || return 1
+  ip=\$(get_ssh_host 0) || return 1
 
   # One round-trip yields reachability (ssh exit status), unit presence and state.
   probe=\$(ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\${ip} \\
     "systemctl --user is-active hermes-dashboard 2>/dev/null; systemctl --user cat hermes-dashboard >/dev/null 2>&1 && echo UNIT=present || echo UNIT=missing" </dev/null) || {
     echo "❌ cannot reach \${TF_VAR_default_username}@\${ip} over SSH."
-    echo "   The instance may have been replaced; re-check with: get_instance_ip 0"
+    echo "   The instance may have been replaced; re-check with: get_ssh_host 0"
     return 1
   }
   state=\$(echo "\$probe" | head -n1)
@@ -742,7 +900,7 @@ alias lhermes='_lhermes() {
 # hindsight-data), so the readiness check is docker inspect, not systemctl.
 # Reuses an existing tunnel when local 9999 already listens.
 alias lhindsight='_lhindsight() {
-  local ip; ip=\$(get_instance_ip 0) || return 1
+  local ip; ip=\$(get_ssh_host 0) || return 1
   local state
   state=\$(ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\${ip} \\
     "docker inspect -f {{.State.Status}} hindsight 2>/dev/null" </dev/null) || true
@@ -832,24 +990,24 @@ alias irefresh='clean_ip_cache && echo "✅ IP cache refreshed"'
 
 # Default user file transfer aliases with progress feedback
 alias lcopyto='function _lcopyto() {
-  echo "📤 Copying \$1 to \${TF_VAR_default_username}@\$(get_instance_ip 0):\$2"
-  scp "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} "\$1" \${TF_VAR_default_username}@\$(get_instance_ip 0):"\$2"
+  echo "📤 Copying \$1 to \${TF_VAR_default_username}@\$(get_ssh_host 0):\$2"
+  scp "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} "\$1" \${TF_VAR_default_username}@\$(get_ssh_host 0):"\$2"
 }; _lcopyto'
 
 alias lcopyfrom='function _lcopyfrom() {
-  echo "📥 Copying \${TF_VAR_default_username}@\$(get_instance_ip 0):\$1 to \$2"
-  scp "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\$(get_instance_ip 0):"\$1" "\$2"
+  echo "📥 Copying \${TF_VAR_default_username}@\$(get_ssh_host 0):\$1 to \$2"
+  scp "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\$(get_ssh_host 0):"\$1" "\$2"
 }; _lcopyfrom'
 
 # Multi-instance SCP for default user
 alias lcopyto1='function _lcopyto1() {
-  echo "📤 Copying \$1 to \${TF_VAR_default_username}@\$(get_instance_ip 1):\$2"
-  scp "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} "\$1" \${TF_VAR_default_username}@\$(get_instance_ip 1):"\$2"
+  echo "📤 Copying \$1 to \${TF_VAR_default_username}@\$(get_ssh_host 1):\$2"
+  scp "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} "\$1" \${TF_VAR_default_username}@\$(get_ssh_host 1):"\$2"
 }; _lcopyto1'
 
 alias lcopyto2='function _lcopyto2() {
-  echo "📤 Copying \$1 to \${TF_VAR_default_username}@\$(get_instance_ip 2):\$2"
-  scp "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} "\$1" \${TF_VAR_default_username}@\$(get_instance_ip 2):"\$2"
+  echo "📤 Copying \$1 to \${TF_VAR_default_username}@\$(get_ssh_host 2):\$2"
+  scp "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} "\$1" \${TF_VAR_default_username}@\$(get_ssh_host 2):"\$2"
 }; _lcopyto2'
 
 # =============================================================================
@@ -863,13 +1021,13 @@ create_user_monitoring_aliases() {
   local prefix="\$2"  # Empty for cbadmin (backward compatible), "g" for gpadmin
 
   # Logs - follow system journal
-  alias \${prefix}logs='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} '\$username'@\$(get_instance_ip 0) "sudo journalctl -f"'
+  alias \${prefix}logs='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} '\$username'@\$(get_ssh_host 0) "sudo journalctl -f"'
 
   # Top - system resource monitoring
-  alias \${prefix}top='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} '\$username'@\$(get_instance_ip 0) "htop"'
+  alias \${prefix}top='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} '\$username'@\$(get_ssh_host 0) "htop"'
 
   # Disk - disk usage and block devices
-  alias \${prefix}disk='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} '\$username'@\$(get_instance_ip 0) "df -h && echo && lsblk"'
+  alias \${prefix}disk='ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} '\$username'@\$(get_ssh_host 0) "df -h && echo && lsblk"'
 }
 
 # Status and monitoring shortcuts (generic, not user-specific)
@@ -899,7 +1057,7 @@ create_user_vscode_aliases() {
   # VS Code remote with error handling
   alias \${prefix}code='function _'\${prefix}'code() {
     local path="\${1:-/home/'\$username'}"
-    local hostname=\$(get_instance_ip 0)
+    local hostname=\$(get_ssh_host 0)
     if [[ -n "\$hostname" && "\$hostname" != "None" ]]; then
       echo "🔗 Opening VS Code remote to \${hostname}:\${path}"
       /Applications/Visual\\ Studio\\ Code.app/Contents/Resources/app/bin/code --remote "ssh-remote+\${TF_VAR_env_prefix}" "\$path"
@@ -948,7 +1106,7 @@ echo "🔢 VM Count: \$TF_VAR_vm_count"'
 # OS version check
 unalias ios 2>/dev/null || true
 ios() {
-    ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\$(get_instance_ip 0) 'if [ -f /etc/os-release ]; then source /etc/os-release && echo \$PRETTY_NAME; else cat /proc/version | sed "s/Linux version //" | cut -d" " -f1-2; fi' 2>/dev/null
+    ssh "\${SSH_OPTS[@]}" -i \${SSH_KEY_PATH} \${TF_VAR_default_username}@\$(get_ssh_host 0) 'if [ -f /etc/os-release ]; then source /etc/os-release && echo \$PRETTY_NAME; else cat /proc/version | sed "s/Linux version //" | cut -d" " -f1-2; fi' 2>/dev/null
 }
 
 # Terraform init aliases
