@@ -194,6 +194,6 @@ After applying, Terraform will provide:
 
 Terraform configuration is now properly aligned with the working ALB-based deployment. Future deployments using `enable_alb_ingress = true` will create the same infrastructure that was manually deployed and verified to work.
 
-**Configuration**: `/Users/eespino/workspace/Synx-Data-Labs/cloudberry-dev-env-launcher/modules/aws/dbaas-platform/alb.tf`  
+**Configuration**: `modules/aws/dbaas-platform/alb.tf`  
 **Variables**: Use `enable_alb_ingress = true` in your terraform.tfvars  
 **Documentation**: This file explains the changes and usage
