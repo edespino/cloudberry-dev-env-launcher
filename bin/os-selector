@@ -1057,6 +1057,10 @@ alias isso='aws sso login --sso-session your-sso-session'
 alias spot-check='check_spot_availability'
 alias spot-prices='check_spot_prices'
 
+# Database-user SSH key exchange across all nodes (multi-node environments):
+# run after every node is up, and again after nodes are added or replaced
+alias lkeyx='"\$REPO_ROOT/bin/lkeyx"'
+
 # Justfile integration (update path as needed)
 alias j='just -f /home/cbadmin/cloudberry-devenv-launcher/docs/Justfile'
 
@@ -1166,6 +1170,9 @@ EOF
         echo -e "  3. ${CYAN}terraform init${NC}"
         echo -e "  4. ${CYAN}terraform plan${NC}"
         echo -e "  5. ${CYAN}terraform apply${NC}"
+    fi
+    if [[ "${vm_count:-1}" -gt 1 ]]; then
+        echo -e "  After all nodes are up: ${CYAN}lkeyx${NC} ${PURPLE}(exchange gpadmin/cbadmin SSH keys between nodes; re-run after adding or replacing nodes)${NC}"
     fi
     echo
 }
