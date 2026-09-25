@@ -51,7 +51,10 @@ MODE="${TF_VAR_access_mode:-ssh}"
 [[ "$MODE" == "ssh" || "$MODE" == "ssm" ]] || die "TF_VAR_access_mode must be ssh or ssm (got '$MODE')"
 [[ "$TF_VAR_region" =~ ^[a-z0-9-]+$ ]] || die "unexpected TF_VAR_region '$TF_VAR_region'"
 [[ "$TF_VAR_default_username" =~ ^[a-z_][a-z0-9_-]*$ ]] || die "unexpected TF_VAR_default_username '$TF_VAR_default_username'"
-[[ -z "${LAUNCHER_SSO_PROFILE:-}" || "$LAUNCHER_SSO_PROFILE" =~ ^[A-Za-z0-9._-]+$ ]] || die "unexpected LAUNCHER_SSO_PROFILE"
+# Same character set os-selector allows for account settings; only used in ssm mode.
+if [[ "$MODE" == "ssm" && -n "${LAUNCHER_SSO_PROFILE:-}" && ! "$LAUNCHER_SSO_PROFILE" =~ ^[A-Za-z0-9@._+-]+$ ]]; then
+    die "unexpected LAUNCHER_SSO_PROFILE"
+fi
 KEY="$(cd "$(dirname "$SSH_KEY_PATH")" && pwd)/$(basename "$SSH_KEY_PATH")"
 [[ -f "$KEY" ]] || die "SSH key not found: $KEY"
 
@@ -180,10 +183,19 @@ sshdir="$home/.ssh"; ak="$sshdir/authorized_keys"
 if [ -L "$sshdir" ] || [ -L "$ak" ]; then echo UNSAFE; exit 0; fi
 mkdir -p "$sshdir"; chmod 700 "$sshdir"
 touch "$ak"; chmod 600 "$ak"
-# Present = on a non-comment line, the first key-type field and the blob after it.
-if awk -v t="$t" -v b="$b" '!/^[[:space:]]*#/ { for (i = 1; i < NF; i++) if ($i ~ /^(ssh-(ed25519|rsa|dss)|ecdsa-sha2-nistp[0-9]+|sk-[a-z0-9@.-]+)$/) { if ($i == t && $(i + 1) == b) f = 1; break } } END { exit !f }' "$ak"; then
-    echo HAVE; exit 0
-fi
+# Present = a non-comment line whose key type and blob match. A line is either
+# "type blob [comment]" or "options type blob [comment]", where options is one
+# token that may contain double-quoted strings (with spaces and \" escapes).
+kt='(ssh-[a-z0-9-]+|ecdsa-sha2-nistp[0-9]+|sk-[A-Za-z0-9@.-]+)'
+re_plain="^[[:space:]]*${kt}[[:space:]]+([A-Za-z0-9+/=]+)"
+re_opts='^[[:space:]]*(([^[:space:]"]|"([^"\]|\\.)*")+)[[:space:]]+'"$kt"'[[:space:]]+([A-Za-z0-9+/=]+)'
+while IFS= read -r line || [ -n "$line" ]; do
+    [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
+    if [[ "$line" =~ $re_plain ]]; then lt=${BASH_REMATCH[1]}; lb=${BASH_REMATCH[2]}
+    elif [[ "$line" =~ $re_opts ]]; then lt=${BASH_REMATCH[4]}; lb=${BASH_REMATCH[5]}
+    else continue; fi
+    if [ "$lt" = "$t" ] && [ "$lb" = "$b" ]; then echo HAVE; exit 0; fi
+done < "$ak"
 if [ -s "$ak" ] && [ -n "$(tail -c1 "$ak")" ]; then printf '\n' >> "$ak"; fi
 printf '%s %s %s\n' "$t" "$b" "$c" >> "$ak"
 echo ADDED
