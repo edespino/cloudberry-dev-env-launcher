@@ -187,8 +187,8 @@ touch "$ak"; chmod 600 "$ak"
 # "type blob [comment]" or "options type blob [comment]", where options is one
 # token that may contain double-quoted strings (with spaces and \" escapes).
 kt='(ssh-[a-z0-9-]+|ecdsa-sha2-nistp[0-9]+|sk-[A-Za-z0-9@.-]+)'
-re_plain="^[[:space:]]*${kt}[[:space:]]+([A-Za-z0-9+/=]+)"
-re_opts='^[[:space:]]*(([^[:space:]"]|"([^"\]|\\.)*")+)[[:space:]]+'"$kt"'[[:space:]]+([A-Za-z0-9+/=]+)'
+re_plain="^[[:space:]]*${kt}[[:space:]]+([A-Za-z0-9+/=]+)([[:space:]]|$)"
+re_opts='^[[:space:]]*(([^[:space:]"]|"([^"\]|\\.)*")+)[[:space:]]+'"$kt"'[[:space:]]+([A-Za-z0-9+/=]+)([[:space:]]|$)'
 while IFS= read -r line || [ -n "$line" ]; do
     [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
     if [[ "$line" =~ $re_plain ]]; then lt=${BASH_REMATCH[1]}; lb=${BASH_REMATCH[2]}
