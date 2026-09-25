@@ -13,7 +13,7 @@ os_options:
   ubuntu26-agentic:
     name: "Ubuntu 26.04 - Agentic (AI tooling)"
     group: "Agentic - Custom Packer AMIs"
-    ami_owner: "703671893074"
+    ami_owner: "${LAUNCHER_LEGACY_ACCOUNT_ID}"
     ami_filter: "agentic-packer-ubuntu26-2*"
     username: "ubuntu"
     dir_name: "ubuntu26-agentic"
@@ -21,7 +21,7 @@ os_options:
   ubuntu26-arm64-agentic:
     name: "Ubuntu 26.04 arm64 - Agentic (AI tooling, Graviton)"
     group: "Agentic - Custom Packer AMIs"
-    ami_owner: "703671893074"
+    ami_owner: "${LAUNCHER_LEGACY_ACCOUNT_ID}"
     ami_filter: "agentic-packer-ubuntu26-arm64-*"
     username: "ubuntu"
     dir_name: "ubuntu26-arm64-agentic"

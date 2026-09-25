@@ -58,6 +58,8 @@ temp/
 
 # direnv
 .direnv/
+# Repo-root .envrc is personal (loads .envrc.local); env templates keep theirs
+/.envrc
 
 # Local overrides
 *local*

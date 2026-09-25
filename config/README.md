@@ -48,7 +48,7 @@ os_options:
   cbdb-build-rocky9:
     name: "Rocky Linux 9 - Cloudberry build"
     group: "Cloudberry Packer custom AMIs"
-    ami_owner: "703671893074"
+    ami_owner: "${LAUNCHER_LEGACY_ACCOUNT_ID}"
     ami_filter: "cloudberry-packer-build-rocky9-*"
     username: "rocky"
     dir_name: "rl9-cbdb-build"
@@ -103,11 +103,17 @@ Base AMIs:
 - Groups appear in order of first occurrence
 - Flexible - you can define any group names
 
+**Account-specific values**: AWS account IDs and SSO profile names are never
+committed. `ami_owner` and `sso_profile` may be written as `"${VAR}"`; the
+selector resolves them from `.envrc.local` at the repo root (gitignored; copy
+`.envrc.example`). An entry whose variable is unset is hidden from the menu.
+Public vendor owners (Canonical, Rocky, Amazon) stay literal.
+
 **Note**: A group name may only be defined in one config file. Duplicate group names across files cause the script to exit with an error, so each additional config file should use its own group names.
 
 ### Cloudberry Packer Custom AMIs
 
-The "Cloudberry Packer custom AMIs" group contains pre-configured development images provided by **Synx Data Labs** (AWS Account ID: `703671893074`) in the **us-west-2** region. These images include:
+The "Cloudberry Packer custom AMIs" group contains pre-configured development images provided by **Synx Data Labs** (owner account ID set as `LAUNCHER_LEGACY_ACCOUNT_ID` in `.envrc.local`) in the **us-west-2** region. These images include:
 - Pre-installed Cloudberry Database dependencies
 - Optimized build toolchain and development tools
 - Configured users and permissions for immediate development

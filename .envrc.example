@@ -1,0 +1,21 @@
+# Copy to .envrc.local (gitignored) and fill in real values. Never commit them.
+# bin/os-selector and bin/gpu-node read .envrc.local directly and resolve
+# "${VAR}" references in config/*.yaml from it.
+#
+# Optional: to also have these in your shell at the repo root, create a
+# personal, gitignored repo-root .envrc containing
+#   source_env_if_exists .envrc.local
+# and run `direnv allow`.
+
+# AWS account that owns the legacy custom AMIs (cloudberry-, synxdb-cloud-,
+# agentic- families)
+export LAUNCHER_LEGACY_ACCOUNT_ID=""
+
+# AWS account that owns images built in the engineering account
+export LAUNCHER_ENG_ACCOUNT_ID=""
+
+# SSO profile (~/.aws/config) for the engineering account
+export LAUNCHER_ENG_SSO_PROFILE=""
+
+# Owner tag for new environments (your email)
+export LAUNCHER_OWNER_TAG=""

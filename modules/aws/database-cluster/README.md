@@ -28,7 +28,7 @@ export TF_VAR_env_prefix=${USER}-$CURRENT_DIR
 export TF_VAR_region=us-west-2
 
 # Dynamic AMI discovery
-AMI_OWNER="703671893074"
+AMI_OWNER="<ami-owner-account-id>"
 AMI_FILTER='cloudberry-ol810-*'
 latest_ami=$(aws ec2 describe-images --region $TF_VAR_region \
  --owners $AMI_OWNER \
