@@ -19,3 +19,14 @@ os_options:
     sso_profile: "${LAUNCHER_ENG_SSO_PROFILE}"
     access_mode: "ssm"
     environment_tag: "engineering"
+
+  ubuntu26-agentic-eng:
+    name: "Ubuntu 26.04 - Agentic (engineering account)"
+    group: "Agentic - Engineering Account"
+    ami_owner: "${LAUNCHER_ENG_ACCOUNT_ID}"
+    ami_filter: "agentic-packer-ubuntu26-2*"
+    username: "ubuntu"
+    dir_name: "ubuntu26-agentic-eng"
+    sso_profile: "${LAUNCHER_ENG_SSO_PROFILE}"
+    access_mode: "ssm"
+    environment_tag: "engineering"
