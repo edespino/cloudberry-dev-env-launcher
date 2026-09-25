@@ -117,11 +117,19 @@ write_files:
         exit 0
       fi
 
-      # Multi-node discovery needs the AWS CLI. Stock images may lack it; the
-      # dnf fallback covers RPM distros whose repos carry it (e.g. Oracle Linux).
-      if ! command -v aws &> /dev/null && command -v dnf &> /dev/null; then
+      # Multi-node discovery needs the AWS CLI. Stock images may lack it: try
+      # each package source the image has (dnf: RPM distros such as Oracle Linux;
+      # snap: Ubuntu; apt: Debian), best-effort, stopping at the first that works.
+      if ! command -v aws &> /dev/null; then
         echo "Installing AWS CLI..."
-        dnf install -y awscli || true
+        if command -v dnf &> /dev/null; then dnf install -y awscli || true; fi
+        if ! command -v aws &> /dev/null && command -v snap &> /dev/null; then
+          snap install aws-cli --classic || true
+          export PATH="$PATH:/snap/bin"
+        fi
+        if ! command -v aws &> /dev/null && command -v apt-get &> /dev/null; then
+          apt-get install -y awscli || true
+        fi
       fi
       if ! command -v aws &> /dev/null; then
         echo "AWS CLI not available: multi-node discovery skipped; adding only this instance to hosts file"
@@ -180,8 +188,9 @@ write_files:
           # Create mount point, persist it across stop/start, and mount the disk
           mkdir -p "$mount_point"
           uuid=$(blkid -s UUID -o value "$device")
-          if [ -n "$uuid" ] && ! grep -q "$uuid" /etc/fstab; then
-            echo "UUID=$uuid $mount_point xfs defaults,nofail 0 2" >> /etc/fstab
+          fstype=$(blkid -s TYPE -o value "$device")
+          if [ -n "$uuid" ] && [ -n "$fstype" ] && ! grep -q "$uuid" /etc/fstab; then
+            echo "UUID=$uuid $mount_point $fstype defaults,nofail 0 2" >> /etc/fstab
           fi
           echo "Mounting $device at $mount_point" >> $LOG_FILE
           mountpoint -q "$mount_point" || mount "$device" "$mount_point"
