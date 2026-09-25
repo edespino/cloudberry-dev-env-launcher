@@ -55,13 +55,18 @@ module "database_cluster" {
   vm_count   = var.vm_count
   my_ip      = var.my_ip
 
-  # Security Configuration
+  # Security / Access Configuration
   allow_remote_ssh_access = var.allow_remote_ssh_access
+  access_mode             = var.access_mode
 
   # Instance Configuration
   ami              = var.ami
   instance_type    = var.instance_type
   default_username = var.default_username
+
+  # Tag Configuration
+  owner_tag       = var.owner_tag
+  environment_tag = var.environment_tag
 
   # Storage Configuration
   root_disk_size       = var.root_disk_size
