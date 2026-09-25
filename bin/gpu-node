@@ -25,12 +25,11 @@ ENVIRONMENTS_DIR="$REPO_ROOT/environments"
 TEMPLATE_DIR="$ENVIRONMENTS_DIR/gpu-node-sample"
 MODULE_DIR="$REPO_ROOT/modules/aws/gpu-node"
 
-# Account-specific values live in the gitignored .envrc.local (see
-# .envrc.example); config/*.yaml refers to them as "${VAR}".
-if [[ -f "$REPO_ROOT/.envrc.local" ]]; then
-    # shellcheck disable=SC1091
-    source "$REPO_ROOT/.envrc.local"
-fi
+# Account-specific values come from the gitignored .envrc.local; config/*.yaml
+# refers to them as "${VAR}" (see lib/config-functions.sh, .envrc.example).
+# shellcheck disable=SC1091
+source "$REPO_ROOT/lib/config-functions.sh"
+load_launcher_local_env "$REPO_ROOT"
 
 # Colors for output
 RED='\033[0;31m'
@@ -168,19 +167,6 @@ read_field() {
     if [[ -z "$value" || "$value" == "null" ]]; then
         [[ "$default" == "__required__" ]] && die "Missing required field '$field' for os_options.$key in $file"
         printf '%s\n' "$default"
-    else
-        printf '%s\n' "$value"
-    fi
-}
-
-# Resolve a whole-value "${VAR}" config reference from the environment;
-# returns 1 when the referenced variable is unset or empty.
-expand_config_value() {
-    local value="$1"
-    if [[ "$value" =~ ^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$ ]]; then
-        local name="${BASH_REMATCH[1]}"
-        [[ -n "${!name:-}" ]] || return 1
-        printf '%s\n' "${!name}"
     else
         printf '%s\n' "$value"
     fi

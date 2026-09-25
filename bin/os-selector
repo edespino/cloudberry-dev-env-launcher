@@ -12,13 +12,11 @@ REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 ENVIRONMENTS_DIR="$REPO_ROOT/environments"
 TEMPLATE_DIR="$ENVIRONMENTS_DIR/multi-os-sample"
 
-# Account-specific values (AWS account IDs, SSO profiles, owner email) are
-# never committed. They live in the gitignored .envrc.local (see
-# .envrc.example); config/*.yaml refers to them as "${VAR}".
-if [[ -f "$REPO_ROOT/.envrc.local" ]]; then
-    # shellcheck disable=SC1091
-    source "$REPO_ROOT/.envrc.local"
-fi
+# Account-specific values come from the gitignored .envrc.local; config/*.yaml
+# refers to them as "${VAR}" (see lib/config-functions.sh, .envrc.example).
+# shellcheck disable=SC1091
+source "$REPO_ROOT/lib/config-functions.sh"
+load_launcher_local_env "$REPO_ROOT"
 
 # Initialize empty arrays - defaults will be loaded from config
 declare -A OS_OPTIONS
@@ -165,20 +163,6 @@ read_optional_field() {
     fi
     if [[ -z "$value" || "$value" == "null" ]]; then
         printf '%s\n' "$default"
-    else
-        printf '%s\n' "$value"
-    fi
-}
-
-# Resolve a whole-value "${VAR}" config reference from the environment
-# (.envrc.local). Prints the value unchanged when it is not a reference;
-# returns 1 when the referenced variable is unset or empty.
-expand_config_value() {
-    local value="$1"
-    if [[ "$value" =~ ^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$ ]]; then
-        local name="${BASH_REMATCH[1]}"
-        [[ -n "${!name:-}" ]] || return 1
-        printf '%s\n' "${!name}"
     else
         printf '%s\n' "$value"
     fi
@@ -422,24 +406,6 @@ replace_placeholder() {
     fi
 }
 
-# Replace one exact line in a file. Fails loudly if the line is absent.
-set_template_line() {
-    local file="$1"
-    local old_line="$2"
-    local new_line="$3"
-    if ! grep -qxF "$old_line" "$file"; then
-        echo -e "${RED}❌ Internal error: line not found in $file: $old_line${NC}" >&2
-        exit 1
-    fi
-    OLD_LINE="$old_line" NEW_LINE="$new_line" python3 -c '
-import os, sys
-p = sys.argv[1]
-old, new = os.environ["OLD_LINE"], os.environ["NEW_LINE"]
-lines = open(p).read().split("\n")
-open(p, "w").write("\n".join(new if l == old else l for l in lines))
-' "$file"
-}
-
 # Function to create environment directory
 create_environment() {
     local selection=$1
@@ -532,22 +498,24 @@ export TF_VAR_default_username="'"$username"'"\
         rm -f "$envrc_file.tmp"
 
         # Account settings from the OS entry (sso_profile, access_mode,
-        # environment_tag). Owner tag comes from LAUNCHER_OWNER_TAG if set.
-        local sso_profile="${SSO_PROFILES[$actual_key]}"
-        local access_mode="${ACCESS_MODES[$actual_key]}"
+        # environment_tag); owner tag from LAUNCHER_OWNER_TAG (.envrc.local).
+        # Values land in double-quoted shell assignments, so allow only a
+        # conservative character set.
+        local sso_profile="${SSO_PROFILES[$actual_key]:-sso-profile}"
+        local access_mode="${ACCESS_MODES[$actual_key]:-ssh}"
         local env_tag="${ENV_TAGS[$actual_key]}"
-        if [[ -n "$sso_profile" ]]; then
-            set_template_line "$envrc_file" 'SSO_PROFILE="sso-profile"' "SSO_PROFILE=\"$sso_profile\""
-        fi
-        if [[ -n "$access_mode" ]]; then
-            set_template_line "$envrc_file" 'export TF_VAR_access_mode="ssh"' "export TF_VAR_access_mode=\"$access_mode\""
-        fi
-        if [[ -n "$env_tag" ]]; then
-            set_template_line "$envrc_file" 'export TF_VAR_environment_tag=""    # Environment tag; empty keeps env_prefix' "export TF_VAR_environment_tag=\"$env_tag\""
-        fi
-        if [[ -n "${LAUNCHER_OWNER_TAG:-}" ]]; then
-            set_template_line "$envrc_file" 'export TF_VAR_owner_tag=""          # Owner tag (e.g. your email); empty omits it' "export TF_VAR_owner_tag=\"$LAUNCHER_OWNER_TAG\""
-        fi
+        local owner_tag="${LAUNCHER_OWNER_TAG:-}"
+        local setting
+        for setting in "$sso_profile" "$access_mode" "$env_tag" "$owner_tag"; do
+            if [[ ! "$setting" =~ ^[A-Za-z0-9@._+-]*$ ]]; then
+                echo -e "${RED}❌ Unsupported characters in account setting '$setting' (allowed: letters, digits, @ . _ + -)${NC}" >&2
+                exit 1
+            fi
+        done
+        replace_placeholder "$envrc_file" "__SSO_PROFILE__" "$sso_profile"
+        replace_placeholder "$envrc_file" "__ACCESS_MODE__" "$access_mode"
+        replace_placeholder "$envrc_file" "__ENVIRONMENT_TAG__" "$env_tag"
+        replace_placeholder "$envrc_file" "__OWNER_TAG__" "$owner_tag"
     fi
 
     # Update main.tf module path for subdirectories
@@ -601,59 +569,51 @@ fi
 # CORE FUNCTIONS (Optimizations 1, 4)
 # =============================================================================
 
-# IP lookup function (excludes terminated instances explicitly)
-get_instance_ip() {
-  local instance_index="\${1:-0}"
-  
-  # Fetch IP directly, explicitly excluding terminated instances
-  local ip=\$(aws ec2 describe-instances --region "\$TF_VAR_region" \\
+# Attribute of running instance N (excludes terminated instances explicitly)
+# Usage: _instance_attr <PublicIpAddress|InstanceId|...> [index]
+_instance_attr() {
+  local field="\$1"
+  local instance_index="\${2:-0}"
+  local value=\$(aws ec2 describe-instances --region "\$TF_VAR_region" \\
     --filters "Name=tag:Name,Values=\${TF_VAR_env_prefix}-instance-\${instance_index}" \\
               "Name=instance-state-name,Values=running" \\
-    --query "Reservations[*].Instances[*].PublicIpAddress" \\
+    --query "Reservations[*].Instances[*].\${field}" \\
     --output text 2>/dev/null | head -n1)
-  
-  if [[ -n "\$ip" && "\$ip" != "None" && "\$ip" != "" ]]; then
-    echo "\$ip"
+
+  if [[ -n "\$value" && "\$value" != "None" ]]; then
+    echo "\$value"
   else
     echo "❌ No running instance found for \${TF_VAR_env_prefix}-instance-\${instance_index}" >&2
     return 1
   fi
 }
 
-# Instance ID lookup (Session Manager target)
-get_instance_id() {
-  local instance_index="\${1:-0}"
-  local id=\$(aws ec2 describe-instances --region "\$TF_VAR_region" \\
-    --filters "Name=tag:Name,Values=\${TF_VAR_env_prefix}-instance-\${instance_index}" \\
-              "Name=instance-state-name,Values=running" \\
-    --query "Reservations[*].Instances[*].InstanceId" \\
-    --output text 2>/dev/null | head -n1)
+get_instance_ip() { _instance_attr PublicIpAddress "\$@"; }
+get_instance_id() { _instance_attr InstanceId "\$@"; }   # Session Manager target
 
-  if [[ -n "\$id" && "\$id" != "None" ]]; then
-    echo "\$id"
-  else
-    echo "❌ No running instance found for \${TF_VAR_env_prefix}-instance-\${instance_index}" >&2
-    return 1
-  fi
+# Session Manager ProxyCommand for ssh config files (%h = instance ID)
+# Usage: ssm_proxy_command <profile> <region>
+ssm_proxy_command() {
+  printf 'sh -c "aws ssm start-session --target %%h --document-name AWS-StartSSHSession --parameters portNumber=%%p --profile %s --region %s"' "\$1" "\$2"
 }
 
 # Route ssh to EC2 instance IDs through Session Manager. Written once to
-# ~/.ssh/launcher.d/ (needs the "Include ~/.ssh/launcher.d/*.conf" line at the
-# top of ~/.ssh/config, the same line lherdr needs). IP targets are unaffected.
+# ~/.ssh/launcher.d/ and rewritten when its content changes (needs the
+# "Include ~/.ssh/launcher.d/*.conf" line at the top of ~/.ssh/config, the same
+# line lherdr needs). IP targets are unaffected.
 # The profile comes from LAUNCHER_SSO_PROFILE (exported by the env's .envrc)
 # at connect time; lherdr stanzas carry their own profile.
 ensure_ssm_ssh_config() {
   local f=~/.ssh/launcher.d/00-ssm.conf
-  if [[ ! -f "\$f" ]]; then
-    mkdir -p ~/.ssh/launcher.d
-    cat > "\$f" <<'SSMCFG'
-# Written by cloudberry-dev-env-launcher: ssh to EC2 instance IDs via Session Manager
+  local want="# Written by cloudberry-dev-env-launcher: ssh to EC2 instance IDs via Session Manager
 Host i-* mi-*
-  ProxyCommand sh -c "aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p --profile \${LAUNCHER_SSO_PROFILE:?LAUNCHER_SSO_PROFILE not set} --region \${TF_VAR_region:-us-west-2}"
-SSMCFG
-  fi
-  if ! grep -qs 'launcher.d/\*.conf' ~/.ssh/config; then
-    echo "⚠️  Add 'Include ~/.ssh/launcher.d/*.conf' at the top of ~/.ssh/config" >&2
+  ProxyCommand \$(ssm_proxy_command '\${LAUNCHER_SSO_PROFILE:?LAUNCHER_SSO_PROFILE not set}' '\${TF_VAR_region:-us-west-2}')"
+  if [[ "\$(cat "\$f" 2>/dev/null)" != "\$want" ]]; then
+    mkdir -p ~/.ssh/launcher.d
+    printf '%s\\n' "\$want" > "\$f"
+    if ! grep -qs 'launcher.d/\\*.conf' ~/.ssh/config; then
+      echo "⚠️  Add 'Include ~/.ssh/launcher.d/*.conf' at the top of ~/.ssh/config" >&2
+    fi
   fi
 }
 
@@ -686,7 +646,7 @@ wait_for_ssh() {
   hostname=\$(get_ssh_host "\$instance_index")
 
   if [ -z "\$hostname" ] || [ "\$hostname" = "None" ]; then
-    echo "❌ Failed to retrieve IP address for \${env_prefix}-instance-\${instance_index} in region \${region}."
+    echo "❌ Failed to retrieve the SSH target for \${env_prefix}-instance-\${instance_index} in region \${region}."
     return 1
   fi
 
@@ -718,10 +678,8 @@ wait_for_ssh() {
     fi
 
     if [ \$i -eq 30 ]; then
-      echo "❌ SSH is still not available after 30 attempts. Exiting."
-      rename_ami "FAILED"
-      cleanup
-      exit 1
+      echo "❌ SSH is still not available after 30 attempts."
+      return 1
     fi
   done
 }
@@ -791,7 +749,11 @@ alias lherdr='_lherdr() {
   local ip; ip=\$(get_ssh_host 0) || return 1
   local proxy=""
   if [[ "\${TF_VAR_access_mode:-ssh}" == "ssm" ]]; then
-    proxy="  ProxyCommand sh -c \"aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p --profile \${LAUNCHER_SSO_PROFILE} --region \${TF_VAR_region}\""
+    if [[ -z "\${LAUNCHER_SSO_PROFILE:-}" ]]; then
+      echo "❌ LAUNCHER_SSO_PROFILE is not set; reload the environment (direnv reload) and retry" >&2
+      return 1
+    fi
+    proxy="  ProxyCommand \$(ssm_proxy_command "\${LAUNCHER_SSO_PROFILE}" "\${TF_VAR_region}")"
   fi
   mkdir -p ~/.ssh/launcher.d
   cat > ~/.ssh/launcher.d/\${TF_VAR_env_prefix}.conf <<CFG
@@ -1034,6 +996,11 @@ create_user_monitoring_aliases() {
 alias istatus='echo "📊 \${TF_VAR_env_prefix} Status:" && istate'
 
 alias iping='for i in {0..2}; do
+  if [[ "\${TF_VAR_access_mode:-ssh}" == "ssm" ]]; then
+    _iid=\$(get_instance_id \$i 2>/dev/null) || { echo "❌ Instance \$i not running"; continue; }
+    echo "🏓 instance-\$i (\$_iid) Session Manager: \$(aws ssm describe-instance-information --region "\$TF_VAR_region" --filters "Key=InstanceIds,Values=\$_iid" --query "InstanceInformationList[0].PingStatus" --output text 2>/dev/null)"
+    continue
+  fi
   echo "🏓 Pinging instance-\$i:"
   timeout 3 ping -c 2 \$(get_instance_ip \$i) 2>/dev/null || echo "❌ Instance \$i not reachable"
 done'
@@ -1056,11 +1023,11 @@ create_user_vscode_aliases() {
 
   # VS Code remote with error handling
   alias \${prefix}code='function _'\${prefix}'code() {
-    local path="\${1:-/home/'\$username'}"
+    local rpath="\${1:-/home/'\$username'}"
     local hostname=\$(get_ssh_host 0)
     if [[ -n "\$hostname" && "\$hostname" != "None" ]]; then
-      echo "🔗 Opening VS Code remote to \${hostname}:\${path}"
-      /Applications/Visual\\ Studio\\ Code.app/Contents/Resources/app/bin/code --remote "ssh-remote+\${TF_VAR_env_prefix}" "\$path"
+      echo "🔗 Opening VS Code remote to \${hostname}:\${rpath}"
+      /Applications/Visual\\ Studio\\ Code.app/Contents/Resources/app/bin/code --remote "ssh-remote+\${TF_VAR_env_prefix}" "\$rpath"
     else
       echo "❌ Cannot connect - instance not running"
       return 1
