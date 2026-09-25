@@ -32,4 +32,14 @@ resource "aws_iam_instance_profile" "this" {
   role = aws_iam_role.this.name
 
   tags = local.common_tags
+
+  # A new profile and role policy can take seconds to propagate. An instance
+  # launched before then boots without role credentials, and its SSM agent may
+  # not recover until reboot. Create-time only (provisioners do not run on
+  # update), so existing nodes see no plan change.
+  depends_on = [aws_iam_role_policy_attachment.ssm_core]
+
+  provisioner "local-exec" {
+    command = "sleep 20"
+  }
 }

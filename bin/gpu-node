@@ -70,10 +70,13 @@ Options:
   --node-name <name>      Node name appended to the parent prefix (default: $DEFAULT_NODE_NAME)
   --instance-type <type>  ${ALLOWED_INSTANCE_TYPES[0]} (default) or ${ALLOWED_INSTANCE_TYPES[1]}
   --ami <key>             x86_64 os_options key from config/gpu-config-*.yaml or
-                          config/os-config-*.yaml (default: $DEFAULT_AMI_KEY when present)
+                          config/os-config-*.yaml (default: $DEFAULT_AMI_KEY when present).
+                          Only entries that fit the parent's account are accepted
+                          (sso_profile binding; passed-tag needs same-account tags)
   --hostname <name>       Linux hostname of the node (default: $DEFAULT_HOSTNAME)
   --ollama-access <mode>  tunnel (default) | vpc | vpc+laptop  (see the generated .envrc for
                           what each mode opens; Ollama has no authentication)
+                          vpc+laptop is unavailable when the parent uses ssm access
   --private-ip <addr>     Pin the node's private IPv4 inside the parent subnet so rebuilds keep
                           the same address (default: DHCP). --check verifies it is free.
   --check                 After scaffolding, run read-only AWS checks: g6 offering in
@@ -159,6 +162,7 @@ AMI_OWNERS=()
 AMI_FILTERS=()
 AMI_USERS=()
 AMI_MATCHES=()
+AMI_PROFILES=()   # sso_profile per entry (empty: not bound to an account)
 
 read_field() {
     # read_field <file> <key> <field> [default]; fails when required and missing
@@ -185,7 +189,7 @@ load_ami_options() {
         printf '%s\n' "${config_files[@]}" | grep '/os-config-' | sort
     )
 
-    local key keys arch match owner skipped=0
+    local key keys arch match owner profile skipped=0
     for f in "${config_files[@]}"; do
         keys=$(yq eval '.os_options | keys | .[]' "$f") || die "yq failed to parse os_options keys from $f"
         for key in $keys; do
@@ -194,6 +198,7 @@ load_ami_options() {
             match=$(read_field "$f" "$key" "ami_match" "name")
             [[ "$match" == "name" || "$match" == "passed-tag" ]] || die "os_options.$key.ami_match must be 'name' or 'passed-tag' (got '$match') in $f"
             owner=$(expand_config_value "$(read_field "$f" "$key" "ami_owner")") || { skipped=$((skipped + 1)); continue; }
+            profile=$(expand_config_value "$(read_field "$f" "$key" "sso_profile" "")") || { skipped=$((skipped + 1)); continue; }
             AMI_KEYS+=("$key")
             AMI_NAMES+=("$(read_field "$f" "$key" "name")")
             AMI_GROUPS+=("$(read_field "$f" "$key" "group")")
@@ -201,6 +206,7 @@ load_ami_options() {
             AMI_FILTERS+=("$(read_field "$f" "$key" "ami_filter")")
             AMI_USERS+=("$(read_field "$f" "$key" "username")")
             AMI_MATCHES+=("$match")
+            AMI_PROFILES+=("$profile")
         done
     done
     [[ $skipped -gt 0 ]] && echo "ℹ️  $skipped AMI option(s) hidden: they reference variables not set in .envrc.local (copy .envrc.example)" >&2
@@ -339,36 +345,86 @@ select_instance_type() {
     done
 }
 
+# Inherit SSO profile, region and access mode from the parent's .envrc (fall
+# back to the repo defaults; environments created before access modes are ssh).
+PARENT_SSO_PROFILE="sso-profile"
+PARENT_REGION="us-west-2"
+PARENT_ACCESS_MODE="ssh"
+load_parent_settings() {
+    local envrc="$1/.envrc" v
+    # A missing line keeps the default (grep's no-match status must not trip set -e)
+    [[ -f "$envrc" ]] || return 0
+    v=$({ grep -E '^SSO_PROFILE=' "$envrc" || true; } | head -1 | sed -E 's/^SSO_PROFILE="?([^"[:space:]]*)"?.*/\1/'); [[ -n "$v" ]] && PARENT_SSO_PROFILE="$v"
+    v=$({ grep -E '^export TF_VAR_region=' "$envrc" || true; } | head -1 | sed -E 's/^export TF_VAR_region="?([^"[:space:]]*)"?.*/\1/'); [[ -n "$v" ]] && PARENT_REGION="$v"
+    v=$({ grep -E '^export TF_VAR_access_mode=' "$envrc" || true; } | head -1 | sed -E 's/^export TF_VAR_access_mode="?([^"[:space:]]*)"?.*/\1/'); [[ -n "$v" ]] && PARENT_ACCESS_MODE="$v"
+    [[ "$PARENT_ACCESS_MODE" == "ssh" || "$PARENT_ACCESS_MODE" == "ssm" ]] || die "Parent access mode must be ssh or ssm (got '$PARENT_ACCESS_MODE' in $envrc)"
+}
+
+# Whether AMI entry <idx> fits the selected parent's account:
+#  - an entry that declares sso_profile belongs to that profile's account;
+#  - a passed-tag entry without one needs same-account Name tags (tags do not
+#    cross accounts), so it is offered only to parents whose SSO profile no
+#    entry claims;
+#  - any other name-match entry (public or shared image) fits every parent.
+ami_fits_parent() {
+    local idx="$1" p="${AMI_PROFILES[$1]}" i
+    if [[ -n "$p" ]]; then
+        [[ "$p" == "$PARENT_SSO_PROFILE" ]]
+        return
+    fi
+    if [[ "${AMI_MATCHES[$idx]}" == "passed-tag" ]]; then
+        for i in "${!AMI_PROFILES[@]}"; do
+            [[ "${AMI_PROFILES[$i]}" == "$PARENT_SSO_PROFILE" ]] && return 1
+        done
+    fi
+    return 0
+}
+
 select_ami() {
-    local i choice default_idx=0
-    local have_default=0
+    local i n choice default_idx=-1 default_n=1
+    local -a fit=()
     for i in "${!AMI_KEYS[@]}"; do
-        if [[ "${AMI_KEYS[$i]}" == "$DEFAULT_AMI_KEY" ]]; then default_idx=$i; have_default=1; fi
+        ami_fits_parent "$i" && fit+=("$i")
     done
+    [[ ${#fit[@]} -gt 0 ]] || die "No GPU AMI entry fits the parent's account (SSO profile '$PARENT_SSO_PROFILE')"
+    # Default: DEFAULT_AMI_KEY when it fits, else the first fitting passed-tag
+    # entry, else the first fitting entry
+    for i in "${fit[@]}"; do
+        [[ "${AMI_KEYS[$i]}" == "$DEFAULT_AMI_KEY" ]] && default_idx=$i
+    done
+    if [[ $default_idx -lt 0 ]]; then
+        for i in "${fit[@]}"; do
+            if [[ "${AMI_MATCHES[$i]}" == "passed-tag" ]]; then default_idx=$i; break; fi
+        done
+    fi
+    [[ $default_idx -lt 0 ]] && default_idx=${fit[0]}
     if [[ -z "$AMI_KEY" && $ASSUME_YES -eq 1 ]]; then
-        [[ $have_default -eq 1 ]] || die "--yes given but default AMI key '$DEFAULT_AMI_KEY' is not in config; pass --ami <key>"
-        AMI_KEY="$DEFAULT_AMI_KEY"
+        AMI_KEY="${AMI_KEYS[$default_idx]}"
     fi
     if [[ -n "$AMI_KEY" ]]; then
         for i in "${!AMI_KEYS[@]}"; do
             if [[ "${AMI_KEYS[$i]}" == "$AMI_KEY" ]]; then
+                ami_fits_parent "$i" || die "--ami '$AMI_KEY' does not fit the parent's account (SSO profile '$PARENT_SSO_PROFILE')"
                 AMI_IDX=$i
                 return 0
             fi
         done
-        die "Unknown or non-x86_64 --ami key '$AMI_KEY'. Available: ${AMI_KEYS[*]}"
+        die "Unknown or non-x86_64 --ami key '$AMI_KEY'. Available: $(for i in "${fit[@]}"; do printf '%s ' "${AMI_KEYS[$i]}"; done)"
     fi
     echo
-    echo -e "${YELLOW}Select GPU AMI:${NC} ${PURPLE}(x86_64 entries from config/gpu-config-*.yaml, then config/os-config-*.yaml)${NC}"
-    for i in "${!AMI_KEYS[@]}"; do
-        printf "  ${GREEN}[%d]${NC} %-70s ${CYAN}%s${NC} ${PURPLE}[%s]${NC}%s\n" "$((i + 1))" "${AMI_NAMES[$i]}" "${AMI_FILTERS[$i]}" "${AMI_MATCHES[$i]}" \
+    echo -e "${YELLOW}Select GPU AMI:${NC} ${PURPLE}(x86_64 entries from config/gpu-config-*.yaml, then config/os-config-*.yaml, that fit the parent's account)${NC}"
+    n=0
+    for i in "${fit[@]}"; do
+        n=$((n + 1))
+        [[ $i -eq $default_idx ]] && default_n=$n
+        printf "  ${GREEN}[%d]${NC} %-70s ${CYAN}%s${NC} ${PURPLE}[%s]${NC}%s\n" "$n" "${AMI_NAMES[$i]}" "${AMI_FILTERS[$i]}" "${AMI_MATCHES[$i]}" \
             "$([[ $i -eq $default_idx ]] && echo -e " ${PURPLE}(default)${NC}")"
     done
     while true; do
-        prompt "Choose [1-${#AMI_KEYS[@]}] (default: $((default_idx + 1)), q to quit): "
-        choice="${REPLY:-$((default_idx + 1))}"
-        if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#AMI_KEYS[@]} )); then
-            AMI_IDX=$((choice - 1))
+        prompt "Choose [1-$n] (default: $default_n, q to quit): "
+        choice="${REPLY:-$default_n}"
+        if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= n )); then
+            AMI_IDX=${fit[$((choice - 1))]}
             return 0
         fi
         echo -e "${RED}❌ Invalid selection.${NC}"
@@ -377,25 +433,32 @@ select_ami() {
 
 select_ollama_access() {
     local i choice
+    local -a modes=() descs=()
+    for i in "${!OLLAMA_ACCESS_MODES[@]}"; do
+        # An ssm-mode parent has no laptop ingress; vpc+laptop would open 11434 to the laptop
+        [[ "$PARENT_ACCESS_MODE" == "ssm" && "${OLLAMA_ACCESS_MODES[$i]}" == "vpc+laptop" ]] && continue
+        modes+=("${OLLAMA_ACCESS_MODES[$i]}")
+        descs+=("${OLLAMA_ACCESS_DESCS[$i]}")
+    done
     if [[ -z "$OLLAMA_ACCESS" && $ASSUME_YES -eq 1 ]]; then
         OLLAMA_ACCESS="$DEFAULT_OLLAMA_ACCESS"
     fi
     if [[ -n "$OLLAMA_ACCESS" ]]; then
-        for i in "${!OLLAMA_ACCESS_MODES[@]}"; do
-            [[ "${OLLAMA_ACCESS_MODES[$i]}" == "$OLLAMA_ACCESS" ]] && return 0
+        for i in "${!modes[@]}"; do
+            [[ "${modes[$i]}" == "$OLLAMA_ACCESS" ]] && return 0
         done
-        die "Invalid --ollama-access '$OLLAMA_ACCESS'. Allowed: ${OLLAMA_ACCESS_MODES[*]}"
+        die "Invalid --ollama-access '$OLLAMA_ACCESS'. Allowed: ${modes[*]}$([[ "$PARENT_ACCESS_MODE" == "ssm" ]] && echo " (vpc+laptop is unavailable: the parent uses Session Manager access)")"
     fi
     echo
     echo -e "${YELLOW}Select Ollama exposure:${NC} ${PURPLE}(Ollama has no authentication)${NC}"
-    for i in "${!OLLAMA_ACCESS_MODES[@]}"; do
-        printf "  ${GREEN}[%d]${NC} %-12s ${CYAN}%s${NC}\n" "$((i + 1))" "${OLLAMA_ACCESS_MODES[$i]}" "${OLLAMA_ACCESS_DESCS[$i]}"
+    for i in "${!modes[@]}"; do
+        printf "  ${GREEN}[%d]${NC} %-12s ${CYAN}%s${NC}\n" "$((i + 1))" "${modes[$i]}" "${descs[$i]}"
     done
     while true; do
-        prompt "Choose [1-${#OLLAMA_ACCESS_MODES[@]}] (default: 1, q to quit): "
+        prompt "Choose [1-${#modes[@]}] (default: 1, q to quit): "
         choice="${REPLY:-1}"
-        if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#OLLAMA_ACCESS_MODES[@]} )); then
-            OLLAMA_ACCESS="${OLLAMA_ACCESS_MODES[$((choice - 1))]}"
+        if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#modes[@]} )); then
+            OLLAMA_ACCESS="${modes[$((choice - 1))]}"
             return 0
         fi
         echo -e "${RED}❌ Invalid selection.${NC}"
@@ -504,6 +567,7 @@ main() {
     PARENT_IDX=-1
     AMI_IDX=-1
     select_parent
+    load_parent_settings "${PARENT_DIRS[$PARENT_IDX]}"
     select_node_name
     select_instance_type
     select_ami
@@ -520,13 +584,8 @@ main() {
     local parent_base
     parent_base="$(basename "$parent_dir")"
 
-    # Inherit SSO profile and region from the parent's .envrc (fall back to the repo defaults)
-    local sso_profile="sso-profile" region="us-west-2"
-    if [[ -f "$parent_dir/.envrc" ]]; then
-        local v
-        v=$(grep -E '^SSO_PROFILE=' "$parent_dir/.envrc" | head -1 | sed -E 's/^SSO_PROFILE="?([^"[:space:]]*)"?.*/\1/'); [[ -n "$v" ]] && sso_profile="$v"
-        v=$(grep -E '^export TF_VAR_region=' "$parent_dir/.envrc" | head -1 | sed -E 's/^export TF_VAR_region="?([^"[:space:]]*)"?.*/\1/'); [[ -n "$v" ]] && region="$v"
-    fi
+    # SSO profile, region and access mode come from the parent (load_parent_settings)
+    local sso_profile="$PARENT_SSO_PROFILE" region="$PARENT_REGION"
 
     # Target: sibling of the parent, named <parent>-<node_name>
     local target_dir="${parent_dir}-${NODE_NAME}"
@@ -554,6 +613,7 @@ main() {
     echo -e "  ${PURPLE}AMI Filter:${NC} $ami_filter ${CYAN}(match: $ami_match)${NC}"
     echo -e "  ${PURPLE}Username:${NC} $ami_user"
     echo -e "  ${PURPLE}Region / SSO:${NC} $region / $sso_profile"
+    echo -e "  ${PURPLE}Access:${NC} $PARENT_ACCESS_MODE $([[ "$PARENT_ACCESS_MODE" == "ssm" ]] && echo "(SSH over Session Manager, inherited from the parent)" || echo "(SSH to the public IP)")"
     echo -e "  ${PURPLE}IAM:${NC} SSM-only role ${parent_prefix}-${NODE_NAME}-ssm"
     case "$OLLAMA_ACCESS" in
         tunnel)     echo -e "  ${PURPLE}Security Group:${NC} parent's only; Ollama loopback, tunnel access" ;;
@@ -594,6 +654,7 @@ main() {
     replace_placeholder "$envrc" "__AMI_MATCH__" "$ami_match"
     replace_placeholder "$envrc" "__DEFAULT_USERNAME__" "$ami_user"
     replace_placeholder "$envrc" "__SSO_PROFILE__" "$sso_profile"
+    replace_placeholder "$envrc" "__ACCESS_MODE__" "$PARENT_ACCESS_MODE"
     replace_placeholder "$envrc" "__REGION__" "$region"
     replace_placeholder "$envrc" "__REPO_ROOT_RELPATH__" "$repo_root_rel"
 
