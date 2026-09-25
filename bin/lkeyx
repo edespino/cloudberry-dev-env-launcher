@@ -131,14 +131,18 @@ REMOTE
         case "$tag" in
             KEY)
                 PRESENT["$n $u"]=1
-                if [[ ! "$ktype" =~ ^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp[0-9]+)$ || ! "$kblob" =~ ^[A-Za-z0-9+/=]+$ ]]; then
-                    echo "   node ${IDX[$n]}: $u has an unrecognized public key; skipped"; problems=$((problems + 1)); continue
+                fp=""
+                if [[ "$ktype" =~ ^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp[0-9]+)$ && "$kblob" =~ ^[A-Za-z0-9+/=]+$ ]]; then
+                    fp=$(ssh-keygen -lf - <<< "${ktype} ${kblob}" 2>/dev/null | awk '{print $2}') || fp=""
+                fi
+                if [[ -z "$fp" ]]; then
+                    echo "   node ${IDX[$n]}: $u has an invalid public key; skipped"; problems=$((problems + 1)); continue
                 fi
                 if [[ -z "${SEEN["$u $ktype $kblob"]:-}" ]]; then
                     SEEN["$u $ktype $kblob"]=1
                     KEYS[$u]+="${ktype} ${kblob} ${kcomment}"$'\n'
                 fi
-                echo "   node ${IDX[$n]}: $u key $(ssh-keygen -lf - <<< "${ktype} ${kblob}" 2>/dev/null | awk '{print $2}')" ;;
+                echo "   node ${IDX[$n]}: $u key $fp" ;;
             SKIP)    echo "   node ${IDX[$n]}: $u not present, skipped" ;;
             NOKEY)   PRESENT["$n $u"]=1; problems=$((problems + 1)); echo "   node ${IDX[$n]}: $u ready but has no usable id_ed25519.pub" ;;
             TIMEOUT) PRESENT["$n $u"]=1; problems=$((problems + 1)); echo "   node ${IDX[$n]}: $u key not ready after ${TIMEOUT}s" ;;
@@ -160,42 +164,54 @@ for n in "${!IDX[@]}"; do
         while read -r line; do [[ -n "$line" ]] && payload+="$u $line"$'\n'; done <<< "${KEYS[$u]}"
     done
     [[ -n "$payload" ]] || continue
+    expected=$(grep -c . <<< "$payload")
     if [[ "$DRY_RUN" -eq 1 ]]; then
-        echo "   [dry-run] node ${IDX[$n]}: would ensure $(grep -c . <<< "$payload") key(s) in authorized_keys"
+        echo "   [dry-run] node ${IDX[$n]}: would ensure ${expected} key(s) in authorized_keys"
         continue
     fi
     result=$(rsh "$n" "$payload" <<'REMOTE'
 set -euo pipefail
+# Every operation on the user's files runs as that user, so a symlink swapped
+# in by the user can only ever reach files the user could already change.
+USER_STEP=$(cat <<'EOS'
+set -euo pipefail
+home=$1; t=$2; b=$3; c=$4
+sshdir="$home/.ssh"; ak="$sshdir/authorized_keys"
+if [ -L "$sshdir" ] || [ -L "$ak" ]; then echo UNSAFE; exit 0; fi
+mkdir -p "$sshdir"; chmod 700 "$sshdir"
+touch "$ak"; chmod 600 "$ak"
+# Present = on a non-comment line, the first key-type field and the blob after it.
+if awk -v t="$t" -v b="$b" '!/^[[:space:]]*#/ { for (i = 1; i < NF; i++) if ($i ~ /^(ssh-(ed25519|rsa|dss)|ecdsa-sha2-nistp[0-9]+|sk-[a-z0-9@.-]+)$/) { if ($i == t && $(i + 1) == b) f = 1; break } } END { exit !f }' "$ak"; then
+    echo HAVE; exit 0
+fi
+if [ -s "$ak" ] && [ -n "$(tail -c1 "$ak")" ]; then printf '\n' >> "$ak"; fi
+printf '%s %s %s\n' "$t" "$b" "$c" >> "$ak"
+echo ADDED
+EOS
+)
+data=$(printf '%s' "$PAYLOAD_B64" | base64 -d)
 while read -r u ktype kblob kcomment; do
     [ -n "$u" ] || continue
-    id -u "$u" >/dev/null 2>&1 || continue
-    home=$(getent passwd "$u" | cut -d: -f6); g=$(id -gn "$u")
-    sshdir="$home/.ssh"; ak="$sshdir/authorized_keys"
-    # Refuse symlinks: a user-controlled link must never redirect this write.
-    if [ -L "$sshdir" ] || [ -L "$ak" ]; then echo "UNSAFE $u"; continue; fi
-    [ -d "$sshdir" ] || install -d -m 700 -o "$u" -g "$g" "$sshdir"
-    chown "$u:$g" "$sshdir"; chmod 700 "$sshdir"
-    [ -f "$ak" ] || sudo -u "$u" touch "$ak"
-    chown "$u:$g" "$ak"; chmod 600 "$ak"
-    # Present = an active (non-comment) line with the same type and blob fields.
-    if awk -v t="$ktype" -v b="$kblob" '!/^[[:space:]]*#/ { for (i = 1; i < NF; i++) if ($i == t && $(i + 1) == b) f = 1 } END { exit !f }' "$ak"; then
-        echo "HAVE $u"; continue
-    fi
-    # Append as the user, never as root; start on a fresh line.
-    if [ -s "$ak" ] && [ -n "$(tail -c1 "$ak")" ]; then printf '\n' | sudo -u "$u" tee -a "$ak" >/dev/null; fi
-    printf '%s %s %s\n' "$ktype" "$kblob" "$kcomment" | sudo -u "$u" tee -a "$ak" >/dev/null
-    echo "ADDED $u"
-done < <(printf '%s' "$PAYLOAD_B64" | base64 -d)
+    if ! id -u "$u" >/dev/null 2>&1; then echo "GONE $u"; continue; fi
+    home=$(getent passwd "$u" | cut -d: -f6)
+    r=$(cd / && sudo -u "$u" bash -c "$USER_STEP" _ "$home" "$ktype" "$kblob" "${kcomment:-}" 2>/dev/null) || r=FAILED
+    echo "$r $u"
+done <<< "$data"
 REMOTE
 ) || die "could not update authorized_keys on node ${IDX[$n]}"
     added=$(grep -c '^ADDED' <<< "$result" || true); have=$(grep -c '^HAVE' <<< "$result" || true)
-    unsafe=$(grep '^UNSAFE' <<< "$result" | awk '{print $2}' | sort -u | tr '\n' ' ' || true)
+    got=$(grep -cE '^(ADDED|HAVE|UNSAFE|FAILED|GONE) ' <<< "$result" || true)
     echo "   node ${IDX[$n]}: ${added} key(s) added, ${have} already present"
-    if [[ -n "$unsafe" ]]; then
-        echo "   node ${IDX[$n]}: refused symlinked ~/.ssh or authorized_keys for: ${unsafe}"; problems=$((problems + 1))
-    fi
+    unsafe=$(grep '^UNSAFE' <<< "$result" | awk '{print $2}' | sort -u | tr '\n' ' ' || true)
+    failed=$(grep -E '^(FAILED|GONE)' <<< "$result" | awk '{print $2}' | sort -u | tr '\n' ' ' || true)
+    if [[ -n "$unsafe" ]]; then echo "   node ${IDX[$n]}: refused symlinked ~/.ssh or authorized_keys for: ${unsafe}"; problems=$((problems + 1)); fi
+    if [[ -n "$failed" ]]; then echo "   node ${IDX[$n]}: could not write authorized_keys for: ${failed}"; problems=$((problems + 1)); fi
+    if [[ "$got" -ne "$expected" ]]; then echo "   node ${IDX[$n]}: ${got} of ${expected} key(s) processed"; problems=$((problems + 1)); fi
 done
-if [[ "$DRY_RUN" -eq 1 ]]; then echo "ℹ️  Dry run: no changes made."; exit 0; fi
+if [[ "$DRY_RUN" -eq 1 ]]; then
+    if [[ "$problems" -gt 0 ]]; then echo "❌ Dry run: no changes made; ${problems} problem(s) above"; exit 1; fi
+    echo "ℹ️  Dry run: no changes made."; exit 0
+fi
 
 # --- verify ----------------------------------------------------------------
 if [[ "$VERIFY" -eq 1 ]]; then
@@ -210,8 +226,10 @@ if [[ "$VERIFY" -eq 1 ]]; then
             done
         done
         [[ -n "$payload" ]] || continue
+        expected=$(grep -c . <<< "$payload")
         out=$(rsh "$n" "$payload" <<'REMOTE'
-set -u
+set -euo pipefail
+data=$(printf '%s' "$PAYLOAD_B64" | base64 -d)
 while read -r u idx ip; do
     [ -n "$u" ] || continue
     if sudo -u "$u" ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
@@ -220,14 +238,17 @@ while read -r u idx ip; do
     else
         echo "FAIL $u $idx"
     fi
-done < <(printf '%s' "$PAYLOAD_B64" | base64 -d)
+done <<< "$data"
 REMOTE
 ) || { echo "   node ${IDX[$n]}: could not run the check"; problems=$((problems + 1)); continue; }
+        got=0
         while read -r st u idx; do
             [[ -z "$st" ]] && continue
+            got=$((got + 1))
             echo "   ${IDX[$n]} -> ${idx} as ${u}: ${st}"
             [[ "$st" == "OK" ]] || problems=$((problems + 1))
         done <<< "$out"
+        if [[ "$got" -ne "$expected" ]]; then echo "   node ${IDX[$n]}: ${got} of ${expected} check(s) ran"; problems=$((problems + 1)); fi
     done
 fi
 
