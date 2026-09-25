@@ -7,8 +7,8 @@
 #   source_env_if_exists .envrc.local
 # and run `direnv allow`.
 
-# AWS account that owns the legacy custom AMIs (cloudberry-, synxdb-cloud-,
-# agentic- families)
+# AWS account that owned the earlier custom AMIs. No committed config entry
+# uses it; set it only for local (gitignored) entries that still need it.
 export LAUNCHER_LEGACY_ACCOUNT_ID=""
 
 # AWS account that owns images built in the engineering account

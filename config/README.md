@@ -45,13 +45,15 @@ os_options:
     username: "ec2-user"
     dir_name: "amazon-linux-2023"
 
-  cbdb-build-rocky9:
-    name: "Rocky Linux 9 - Cloudberry build"
-    group: "Cloudberry Packer custom AMIs"
-    ami_owner: "${LAUNCHER_LEGACY_ACCOUNT_ID}"
-    ami_filter: "cloudberry-packer-build-rocky9-*"
-    username: "rocky"
-    dir_name: "rl9-cbdb-build"
+  ubuntu26-agentic-eng:
+    name: "Ubuntu 26.04 - Agentic (engineering account)"
+    group: "Agentic - Engineering Account"
+    ami_owner: "${LAUNCHER_ENG_ACCOUNT_ID}"
+    ami_filter: "agentic-packer-ubuntu26-2*"
+    username: "ubuntu"
+    dir_name: "ubuntu26-agentic-eng"
+    sso_profile: "${LAUNCHER_ENG_SSO_PROFILE}"
+    access_mode: "ssm"
 ```
 
 ## Key Naming
@@ -88,9 +90,9 @@ The `group` field organizes OS options into logical sections in the interactive 
 ```
 Available Operating Systems:
 
-Cloudberry Packer custom AMIs:
-  [1] Rocky Linux 9 - Cloudberry build (rl9-cbdb-build)
-  [2] Ubuntu 22.04 - Cloudberry build (ubuntu22-cbdb-build)
+Agentic - Engineering Account:
+  [1] Ubuntu 26.04 arm64 - Agentic (engineering account) (ubuntu26-arm64-agentic-eng)
+  [2] Ubuntu 26.04 - Agentic (engineering account) (ubuntu26-agentic-eng)
 
 Base AMIs:
   [3] Amazon Linux 2023 (al2023-base)
@@ -111,14 +113,20 @@ Public vendor owners (Canonical, Rocky, Amazon) stay literal.
 
 **Note**: A group name may only be defined in one config file. Duplicate group names across files cause the script to exit with an error, so each additional config file should use its own group names.
 
-### Cloudberry Packer Custom AMIs
+### Custom AMIs
 
-The "Cloudberry Packer custom AMIs" group contains pre-configured development images provided by **Synx Data Labs** (owner account ID set as `LAUNCHER_LEGACY_ACCOUNT_ID` in `.envrc.local`) in the **us-west-2** region. These images include:
-- Pre-installed Cloudberry Database dependencies
-- Optimized build toolchain and development tools
-- Configured users and permissions for immediate development
+The launcher lists only custom images built by `cloudberry-image-factory` in the
+engineering account (`config/os-config-engineering.yaml` for database nodes,
+`config/gpu-config-engineering.yaml` for GPU sidecars): agentic `ubuntu26`
+(x86_64), `ubuntu26-arm64` and `ubuntu26-gpu`. Their owner and SSO profile come
+from `.envrc.local` (`LAUNCHER_ENG_ACCOUNT_ID`, `LAUNCHER_ENG_SSO_PROFILE`).
 
-**Note**: Access to these custom AMIs requires appropriate AWS permissions to the Synx Data Labs account.
+The **cloudberry** (rocky9, rocky10) images and the other custom families are
+not built in the engineering account yet. Build one on demand with
+`cloudberry-image-factory` as a local build
+(`AWS_PROFILE="$LAUNCHER_ENG_SSO_PROFILE"`), then add its entry back with
+`ami_owner: "${LAUNCHER_ENG_ACCOUNT_ID}"`, the engineering `sso_profile`, and
+`access_mode: "ssm"`. Stock vendor images (Base AMIs) need no build.
 
 ## Installing yq
 
@@ -192,23 +200,30 @@ images use `passed-tag`. Example:
 
 ```yaml
 os_options:
-  ubuntu26-gpu:
-    name: "Ubuntu 26.04 - Agentic GPU (NVIDIA L4 driver, nvidia-smi, nvtop, Ollama)"
-    group: "Agentic - GPU Packer AMIs"
-    ami_owner: "<image-factory account>"
+  ubuntu26-gpu-eng:
+    name: "Ubuntu 26.04 - Agentic GPU (engineering account)"
+    group: "Agentic - GPU (engineering account)"
+    ami_owner: "${LAUNCHER_ENG_ACCOUNT_ID}"
     ami_filter: "agentic-packer-ubuntu26-gpu-*"
     ami_match: "passed-tag"
     username: "ubuntu"
-    dir_name: "ubuntu26-gpu"
+    dir_name: "ubuntu26-gpu-eng"
+    sso_profile: "${LAUNCHER_ENG_SSO_PROFILE}"
 ```
+
+`gpu-node` offers an entry only when it fits the parent environment's account:
+an entry with `sso_profile` only for parents on that profile; a `passed-tag`
+entry without one only for parents whose profile no entry claims (Name tags do
+not cross accounts); any other name-match entry for every parent.
 
 ## File Structure
 
 ```
 config/
 ├── README.md                          # This documentation
-├── os-config-base.yaml                # Base configuration (loaded by os-selector and bin/gpu-node)
-├── gpu-config-agentic.yaml            # GPU node images (loaded by bin/gpu-node only)
+├── os-config-base.yaml                # Stock vendor images (loaded by os-selector and bin/gpu-node)
+├── os-config-engineering.yaml         # Custom images built in the engineering account
+├── gpu-config-engineering.yaml        # GPU node images (loaded by bin/gpu-node only)
 ├── os-config.yaml.example-extended    # Extended YAML example (not loaded)
 └── os-config.sh.example               # Legacy bash example (not loaded)
 ```

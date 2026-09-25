@@ -9,80 +9,9 @@
 
 os_options:
 
-## ----------------------------------------------------------------------
-## Cloudberry Packer custom AMIs
-## (Listed first as they are pre-configured for Cloudberry development)
-##
-## Naming: the image factory (2026-07 family restructure) publishes
-## <family>-packer-<os>-<timestamp>. Entries whose ami_filter still uses the
-## old "cloudberry-packer-build-<os>-*" pattern are RETIRED platforms in the
-## image factory — their filters match only surviving legacy AMIs and will
-## stop resolving once legacy images are cleaned up.
-## ----------------------------------------------------------------------
-
-  al2023-cbdb-build:
-    name: "Amazon Linux 2023 - Cloudberry build"
-    group: "Cloudberry - Custom Packer AMIs"
-    ami_owner: "${LAUNCHER_LEGACY_ACCOUNT_ID}"
-    ami_filter: "cloudberry-packer-build-al2023-*"
-    username: "ec2-user"
-    dir_name: "al2023-cbdb-build"
-
-  centos10-cbdb-build:
-    name: "CentOS Stream 10 - Cloudberry build"
-    group: "Cloudberry - Custom Packer AMIs"
-    ami_owner: "${LAUNCHER_LEGACY_ACCOUNT_ID}"
-    ami_filter: "cloudberry-packer-build-centos10-*"
-    username: "ec2-user"
-    dir_name: "centos10-cbdb-build"
-
-  debian12-cbdb-build:
-    name: "Debian 12 - Cloudberry build"
-    group: "Cloudberry - Custom Packer AMIs"
-    ami_owner: "${LAUNCHER_LEGACY_ACCOUNT_ID}"
-    ami_filter: "cloudberry-packer-build-debian12-*"
-    username: "admin"
-    dir_name: "debian12-cbdb-build"
-
-  rl8-cbdb-build:
-    name: "Rocky Linux 8 - Cloudberry build"
-    group: "Cloudberry - Custom Packer AMIs"
-    ami_owner: "${LAUNCHER_LEGACY_ACCOUNT_ID}"
-    ami_filter: "cloudberry-packer-build-rocky8-*"
-    username: "rocky"
-    dir_name: "rl8-cbdb-build"
-
-  rl9-cbdb-build:
-    name: "Rocky Linux 9 - Cloudberry build"
-    group: "Cloudberry - Custom Packer AMIs"
-    ami_owner: "${LAUNCHER_LEGACY_ACCOUNT_ID}"
-    ami_filter: "cloudberry-packer-rocky9-*"
-    username: "rocky"
-    dir_name: "rl9-cbdb-build"
-
-  rl10-cbdb-build:
-    name: "Rocky Linux 10 - Cloudberry build"
-    group: "Cloudberry - Custom Packer AMIs"
-    ami_owner: "${LAUNCHER_LEGACY_ACCOUNT_ID}"
-    ami_filter: "cloudberry-packer-rocky10-*"
-    username: "rocky"
-    dir_name: "rl10-cbdb-build"
-
-  ubuntu20-cbdb-build:
-    name: "Ubuntu 20.04 - Cloudberry build"
-    group: "Cloudberry - Custom Packer AMIs"
-    ami_owner: "${LAUNCHER_LEGACY_ACCOUNT_ID}"
-    ami_filter: "cloudberry-packer-build-ubuntu20-*"
-    username: "ubuntu"
-    dir_name: "ubuntu20-cbdb-build"
-
-  ubuntu22-cbdb-build:
-    name: "Ubuntu 22.04 - Cloudberry build"
-    group: "Cloudberry - Custom Packer AMIs"
-    ami_owner: "${LAUNCHER_LEGACY_ACCOUNT_ID}"
-    ami_filter: "cloudberry-packer-build-ubuntu22-*"
-    username: "ubuntu"
-    dir_name: "ubuntu22-cbdb-build"
+## Custom AMIs built by cloudberry-image-factory are listed in
+## os-config-engineering.yaml. The cloudberry (rocky9, rocky10) images are not
+## built in the engineering account yet; see config/README.md "Custom AMIs".
 
 ## ----------------------------------------------------------------------
 ## Base AMIs
