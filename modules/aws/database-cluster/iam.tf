@@ -83,14 +83,16 @@ resource "aws_iam_instance_profile" "ec2_cluster_discovery" {
   tags = local.common_tags
 }
 
-# A newly created instance profile can take seconds to propagate. An instance
-# launched before then boots without role credentials, and its SSM agent may
-# not recover until reboot. ssm mode only.
+# A newly created instance profile and role policy can take seconds to
+# propagate. An instance launched before then boots without role credentials
+# (or without SSM permissions), and its SSM agent may not recover until
+# reboot. The wait follows both. ssm mode only.
 resource "null_resource" "instance_profile_propagation" {
   count = local.ssm_only ? 1 : 0
 
   triggers = {
     instance_profile = aws_iam_instance_profile.ec2_cluster_discovery.arn
+    ssm_policy       = aws_iam_role_policy_attachment.ssm_managed_instance_core[0].id
   }
 
   provisioner "local-exec" {

@@ -57,8 +57,12 @@ resource "aws_instance" "database_instances" {
   # cloud-init consumes user_data once, at first boot. Pushing a changed
   # template to a running instance would only stop/start it; new instances
   # pick up template changes.
+  # A stopped instance refreshes with associate_public_ip_address = false
+  # (no public IP while stopped); that attribute forces replacement, so a plan
+  # against a stopped instance would propose destroying it. The subnet sets
+  # map_public_ip_on_launch, so the attribute is redundant after creation.
   lifecycle {
-    ignore_changes = [user_data]
+    ignore_changes = [user_data, associate_public_ip_address]
   }
 
   depends_on = [aws_placement_group.cluster, null_resource.instance_profile_propagation]
