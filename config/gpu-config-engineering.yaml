@@ -1,0 +1,18 @@
+# Engineering-account GPU images, consumed by bin/gpu-node only (see
+# gpu-config-agentic.yaml for ami_match). Account values come from
+# .envrc.local (LAUNCHER_ENG_ACCOUNT_ID, LAUNCHER_ENG_SSO_PROFILE).
+#
+# sso_profile binds an entry to that account: gpu-node offers it only for a
+# parent environment using the same SSO profile. passed-tag works here because
+# the Name tag is read inside the owning account.
+
+os_options:
+  ubuntu26-gpu-eng:
+    name: "Ubuntu 26.04 - Agentic GPU (engineering account)"
+    group: "Agentic - GPU (engineering account)"
+    ami_owner: "${LAUNCHER_ENG_ACCOUNT_ID}"
+    ami_filter: "agentic-packer-ubuntu26-gpu-*"
+    ami_match: "passed-tag"
+    username: "ubuntu"
+    dir_name: "ubuntu26-gpu-eng"
+    sso_profile: "${LAUNCHER_ENG_SSO_PROFILE}"
