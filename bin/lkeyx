@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2154  # TF_VAR_* and SSH_KEY_PATH come from the environment, checked via ${!v} below
+# lkeyx - exchange database-user SSH keys across an environment's nodes
+#
+# Run from an environment directory (direnv loaded). For each database user
+# (gpadmin, cbadmin) on every running <env_prefix>-instance-* node, collects
+# ~user/.ssh/id_ed25519.pub, appends every key missing from each node's
+# ~user/.ssh/authorized_keys (never removes one), then checks passwordless SSH
+# from every node to every other node and prints the result.
+#
+# Transport is the launcher's SSH path as the default user with sudo: the
+# public IP in ssh access mode, SSH over Session Manager in ssm mode. Re-run it
+# after nodes are added or replaced; it is idempotent.
+#
+# Readiness per node and user: /var/lib/cloudberry/dbadmin-ssh-keys.ready
+# (written by the image's first-boot key generation) or an existing
+# id_ed25519.pub (images that ship the key). Users that do not exist on a
+# node are skipped.
+#
+# Usage: lkeyx [--dry-run] [--no-verify] [--timeout SECONDS]
+#
+# Needs (exported by the environment's .envrc): TF_VAR_env_prefix,
+# TF_VAR_region, TF_VAR_default_username, SSH_KEY_PATH; optional
+# TF_VAR_access_mode (ssh|ssm, default ssh) and LAUNCHER_SSO_PROFILE (ssm).
+
+set -euo pipefail
+
+DB_USERS="gpadmin cbadmin"
+READY_MARKER="/var/lib/cloudberry/dbadmin-ssh-keys.ready"
+TIMEOUT=300
+DRY_RUN=0
+VERIFY=1
+
+die() { echo "❌ $*" >&2; exit 1; }
+usage() { sed -n '3,25p' "$0" | sed 's/^# \{0,1\}//'; }
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --dry-run)   DRY_RUN=1; shift ;;
+        --no-verify) VERIFY=0; shift ;;
+        --timeout)   TIMEOUT="${2:-}"; [[ "$TIMEOUT" =~ ^[0-9]+$ ]] || die "--timeout needs a number of seconds"; shift 2 ;;
+        -h|--help)   usage; exit 0 ;;
+        *)           die "Unknown option: $1 (see --help)" ;;
+    esac
+done
+
+for v in TF_VAR_env_prefix TF_VAR_region TF_VAR_default_username SSH_KEY_PATH; do
+    [[ -n "${!v:-}" ]] || die "$v is not set; run lkeyx from an environment directory with direnv loaded"
+done
+MODE="${TF_VAR_access_mode:-ssh}"
+[[ "$MODE" == "ssh" || "$MODE" == "ssm" ]] || die "TF_VAR_access_mode must be ssh or ssm (got '$MODE')"
+KEY="$(cd "$(dirname "$SSH_KEY_PATH")" && pwd)/$(basename "$SSH_KEY_PATH")"
+[[ -f "$KEY" ]] || die "SSH key not found: $KEY"
+
+SSH_OPTS=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
+          -o ConnectTimeout=15 -o BatchMode=yes -i "$KEY")
+if [[ "$MODE" == "ssm" ]]; then
+    profile_arg=""
+    [[ -n "${LAUNCHER_SSO_PROFILE:-}" ]] && profile_arg=" --profile ${LAUNCHER_SSO_PROFILE}"
+    SSH_OPTS+=(-o "ProxyCommand=sh -c \"aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p${profile_arg} --region ${TF_VAR_region}\"")
+fi
+
+# --- nodes -----------------------------------------------------------------
+# name  instance-id  public-ip  private-ip, sorted by name
+nodes=$(aws ec2 describe-instances --region "$TF_VAR_region" \
+    --filters "Name=tag:Name,Values=${TF_VAR_env_prefix}-instance-*" "Name=instance-state-name,Values=running" \
+    --query 'Reservations[].Instances[].[Tags[?Key==`Name`].Value|[0],InstanceId,PublicIpAddress,PrivateIpAddress]' \
+    --output text | sort -V) || die "could not list instances for ${TF_VAR_env_prefix}"
+[[ -n "$nodes" ]] || die "no running instances named ${TF_VAR_env_prefix}-instance-*"
+NAMES=(); TARGETS=(); PRIVATE=()
+while read -r name id pub priv; do
+    [[ -z "$name" ]] && continue
+    if [[ "$MODE" == "ssm" ]]; then
+        target="$id"
+    else
+        [[ -n "$pub" && "$pub" != "None" ]] || die "$name has no public IP (ssh mode)"
+        target="$pub"
+    fi
+    NAMES+=("$name"); TARGETS+=("$target"); PRIVATE+=("$priv")
+done <<< "$nodes"
+count=${#NAMES[@]}
+echo "🔑 ${TF_VAR_env_prefix}: ${count} running node(s), access mode ${MODE}"
+if [[ -n "${TF_VAR_vm_count:-}" && "$count" -lt "$TF_VAR_vm_count" ]]; then
+    echo "⚠️  TF_VAR_vm_count is ${TF_VAR_vm_count} but only ${count} node(s) are running; re-run lkeyx once all are up"
+fi
+if [[ "$count" -lt 2 ]]; then
+    echo "ℹ️  Single node: no keys to exchange."
+    exit 0
+fi
+
+# rsh <index> [payload]: run the bash script on stdin on node <index> as root
+# (via the default user and sudo). The payload travels base64-encoded in
+# PAYLOAD_B64, so stdin stays free for the script.
+rsh() {
+    local payload_b64=""
+    [[ -n "${2:-}" ]] && payload_b64=$(printf '%s' "$2" | base64 | tr -d '\n')
+    ssh "${SSH_OPTS[@]}" "${TF_VAR_default_username}@${TARGETS[$1]}" \
+        "sudo DB_USERS='${DB_USERS}' READY='${READY_MARKER}' TIMEOUT='${TIMEOUT}' PEERS='${PEERS:-}' PAYLOAD_B64='${payload_b64}' bash -s"
+}
+
+# --- collect ---------------------------------------------------------------
+declare -A KEYS=()      # user -> newline-separated public key lines (deduplicated)
+declare -A PRESENT=()   # "<index> <user>" -> 1 when the user exists on that node
+for i in "${!NAMES[@]}"; do
+    out=$(rsh "$i" <<'REMOTE'
+set -u
+deadline=$(( $(date +%s) + TIMEOUT ))
+for u in $DB_USERS; do
+    id -u "$u" >/dev/null 2>&1 || { echo "SKIP $u"; continue; }
+    home=$(getent passwd "$u" | cut -d: -f6)
+    pub="$home/.ssh/id_ed25519.pub"
+    while [ ! -f "$READY" ] && [ ! -s "$pub" ]; do
+        if [ "$(date +%s)" -ge "$deadline" ]; then echo "TIMEOUT $u"; continue 2; fi
+        sleep 5
+    done
+    if [ -s "$pub" ]; then echo "KEY $u $(head -1 "$pub")"; else echo "NOKEY $u"; fi
+done
+REMOTE
+) || die "could not reach ${NAMES[$i]} (${TARGETS[$i]}) as ${TF_VAR_default_username}"
+    while read -r tag u rest; do
+        case "$tag" in
+            KEY)
+                PRESENT["$i $u"]=1
+                blob=$(awk '{print $1" "$2}' <<< "$rest")
+                if ! grep -qF "$blob" <<< "${KEYS[$u]:-}"; then KEYS[$u]+="${rest}"$'\n'; fi
+                echo "   ${NAMES[$i]}: $u key $(ssh-keygen -lf - <<< "$rest" 2>/dev/null | awk '{print $2}')" ;;
+            SKIP)    echo "   ${NAMES[$i]}: $u not present, skipped" ;;
+            NOKEY)   PRESENT["$i $u"]=1; echo "   ${NAMES[$i]}: $u ready but has no id_ed25519.pub" ;;
+            TIMEOUT) PRESENT["$i $u"]=1; echo "   ${NAMES[$i]}: $u key not ready after ${TIMEOUT}s" ;;
+        esac
+    done <<< "$out"
+done
+
+if [[ -z "${KEYS[*]:-}" ]]; then
+    echo "ℹ️  No database-user keys found on any node; nothing to exchange."
+    exit 0
+fi
+
+# --- distribute (append only) ---------------------------------------------
+for i in "${!NAMES[@]}"; do
+    payload=""
+    for u in $DB_USERS; do
+        [[ -n "${PRESENT["$i $u"]:-}" && -n "${KEYS[$u]:-}" ]] || continue
+        while read -r line; do [[ -n "$line" ]] && payload+="$u $line"$'\n'; done <<< "${KEYS[$u]}"
+    done
+    [[ -n "$payload" ]] || continue
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+        echo "   [dry-run] ${NAMES[$i]}: would ensure $(grep -c . <<< "$payload") key(s) in authorized_keys"
+        continue
+    fi
+    result=$(rsh "$i" "$payload" <<'REMOTE'
+set -u
+printf '%s' "$PAYLOAD_B64" | base64 -d | while read -r u key; do
+    [ -n "$u" ] || continue
+    id -u "$u" >/dev/null 2>&1 || continue
+    home=$(getent passwd "$u" | cut -d: -f6); g=$(id -gn "$u"); ak="$home/.ssh/authorized_keys"
+    install -d -m 700 -o "$u" -g "$g" "$home/.ssh"
+    [ -f "$ak" ] || install -m 600 -o "$u" -g "$g" /dev/null "$ak"
+    blob=$(printf '%s\n' "$key" | awk '{print $1" "$2}')
+    if grep -qF "$blob" "$ak"; then echo "HAVE $u"; else printf '%s\n' "$key" >> "$ak"; echo "ADDED $u"; fi
+done
+REMOTE
+) || die "could not update authorized_keys on ${NAMES[$i]}"
+    added=$(grep -c '^ADDED' <<< "$result" || true); have=$(grep -c '^HAVE' <<< "$result" || true)
+    echo "   ${NAMES[$i]}: ${added} key(s) added, ${have} already present"
+done
+[[ "$DRY_RUN" -eq 1 ]] && { echo "ℹ️  Dry run: no changes made."; exit 0; }
+
+# --- verify ----------------------------------------------------------------
+[[ "$VERIFY" -eq 1 ]] || exit 0
+echo "🔎 Node-to-node SSH (as each user, private IPs):"
+failures=0
+for i in "${!NAMES[@]}"; do
+    PEERS=""
+    for j in "${!NAMES[@]}"; do [[ "$j" != "$i" ]] && PEERS+="${NAMES[$j]##*-instance-}=${PRIVATE[$j]} "; done
+    out=$(rsh "$i" <<'REMOTE'
+set -u
+for u in $DB_USERS; do
+    id -u "$u" >/dev/null 2>&1 || continue
+    for p in $PEERS; do
+        idx=${p%%=*}; ip=${p#*=}
+        if sudo -u "$u" ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+               -o LogLevel=ERROR -o ConnectTimeout=5 "$ip" true 2>/dev/null; then
+            echo "OK $u $idx"
+        else
+            echo "FAIL $u $idx"
+        fi
+    done
+done
+REMOTE
+) || { echo "   ${NAMES[$i]}: could not run the check"; failures=$((failures + 1)); continue; }
+    while read -r st u idx; do
+        [[ -z "$st" ]] && continue
+        echo "   ${NAMES[$i]##*-instance-} -> ${idx} as ${u}: ${st}"
+        [[ "$st" == "OK" ]] || failures=$((failures + 1))
+    done <<< "$out"
+done
+if [[ "$failures" -gt 0 ]]; then
+    echo "❌ ${failures} check(s) failed"
+    exit 1
+fi
+echo "✅ Passwordless SSH works between all nodes for every present database user"
