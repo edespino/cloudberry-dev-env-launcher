@@ -70,12 +70,15 @@ resource "aws_security_group" "allow_all" {
   name_prefix = "${var.env_prefix}-allow_all"
   vpc_id      = aws_vpc.main.id
 
-  # SSH access from user's IP (and optionally from anywhere)
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = var.allow_remote_ssh_access ? ["0.0.0.0/0"] : ["${var.my_ip}/32"]
+  # SSH access from user's IP (and optionally from anywhere); absent in ssm mode
+  dynamic "ingress" {
+    for_each = local.ssm_only ? [] : [1]
+    content {
+      from_port   = 22
+      to_port     = 22
+      protocol    = "tcp"
+      cidr_blocks = var.allow_remote_ssh_access ? ["0.0.0.0/0"] : ["${var.my_ip}/32"]
+    }
   }
 
   # HTTP access
@@ -83,7 +86,7 @@ resource "aws_security_group" "allow_all" {
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
-    cidr_blocks = ["${var.my_ip}/32", "10.0.0.0/16"]
+    cidr_blocks = local.app_port_cidrs
   }
 
   # HTTPS access
@@ -91,7 +94,7 @@ resource "aws_security_group" "allow_all" {
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
-    cidr_blocks = ["${var.my_ip}/32", "10.0.0.0/16"]
+    cidr_blocks = local.app_port_cidrs
   }
 
   # PostgreSQL access
@@ -99,7 +102,7 @@ resource "aws_security_group" "allow_all" {
     from_port   = 5432
     to_port     = 5432
     protocol    = "tcp"
-    cidr_blocks = ["${var.my_ip}/32", "10.0.0.0/16"]
+    cidr_blocks = local.app_port_cidrs
   }
 
   # Application port
@@ -107,7 +110,7 @@ resource "aws_security_group" "allow_all" {
     from_port   = 8080
     to_port     = 8080
     protocol    = "tcp"
-    cidr_blocks = ["${var.my_ip}/32", "10.0.0.0/16"]
+    cidr_blocks = local.app_port_cidrs
   }
 
   # Internal TCP traffic

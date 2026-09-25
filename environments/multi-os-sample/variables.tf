@@ -49,6 +49,24 @@ variable "allow_remote_ssh_access" {
   default     = false
 }
 
+variable "access_mode" {
+  description = "\"ssh\" (legacy: port 22 from my_ip) or \"ssm\" (Session Manager only, no laptop ingress)"
+  type        = string
+  default     = "ssh"
+}
+
+variable "owner_tag" {
+  description = "Owner tag value (founder email). Empty omits the tag."
+  type        = string
+  default     = ""
+}
+
+variable "environment_tag" {
+  description = "Environment tag value. Empty keeps env_prefix."
+  type        = string
+  default     = ""
+}
+
 # Variables that pass through module defaults (no customization needed)
 variable "root_disk_size" {
   description = "The size of the root disk in GB"

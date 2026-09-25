@@ -22,7 +22,7 @@ os_options:
   ubuntu26-gpu:
     name: "Ubuntu 26.04 - Agentic GPU (NVIDIA L4 driver, nvidia-smi, nvtop, Ollama)"
     group: "Agentic - GPU Packer AMIs"
-    ami_owner: "703671893074"
+    ami_owner: "${LAUNCHER_LEGACY_ACCOUNT_ID}"
     ami_filter: "agentic-packer-ubuntu26-gpu-*"
     ami_match: "passed-tag"
     username: "ubuntu"

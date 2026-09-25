@@ -1,0 +1,21 @@
+# Engineering-account OS configurations
+# Images built by cloudberry-image-factory inside the engineering account and
+# owned by it. Environments created from these entries use the engineering SSO
+# profile and Session Manager access (no laptop ingress).
+#
+# Account values come from .envrc.local (see .envrc.example):
+#   LAUNCHER_ENG_ACCOUNT_ID, LAUNCHER_ENG_SSO_PROFILE, and LAUNCHER_OWNER_TAG
+#   for the Owner tag. Entries stay hidden until those are set.
+
+os_options:
+  ubuntu26-arm64-agentic-eng:
+    name: "Ubuntu 26.04 arm64 - Agentic (engineering account)"
+    group: "Agentic - Engineering Account"
+    ami_owner: "${LAUNCHER_ENG_ACCOUNT_ID}"
+    ami_filter: "agentic-packer-ubuntu26-arm64-*"
+    username: "ubuntu"
+    dir_name: "ubuntu26-arm64-agentic-eng"
+    arch: "arm64"
+    sso_profile: "${LAUNCHER_ENG_SSO_PROFILE}"
+    access_mode: "ssm"
+    environment_tag: "engineering"

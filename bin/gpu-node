@@ -25,6 +25,12 @@ ENVIRONMENTS_DIR="$REPO_ROOT/environments"
 TEMPLATE_DIR="$ENVIRONMENTS_DIR/gpu-node-sample"
 MODULE_DIR="$REPO_ROOT/modules/aws/gpu-node"
 
+# Account-specific values come from the gitignored .envrc.local; config/*.yaml
+# refers to them as "${VAR}" (see lib/config-functions.sh, .envrc.example).
+# shellcheck disable=SC1091
+source "$REPO_ROOT/lib/config-functions.sh"
+load_launcher_local_env "$REPO_ROOT"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -179,7 +185,7 @@ load_ami_options() {
         printf '%s\n' "${config_files[@]}" | grep '/os-config-' | sort
     )
 
-    local key keys arch match
+    local key keys arch match owner skipped=0
     for f in "${config_files[@]}"; do
         keys=$(yq eval '.os_options | keys | .[]' "$f") || die "yq failed to parse os_options keys from $f"
         for key in $keys; do
@@ -187,15 +193,17 @@ load_ami_options() {
             [[ "$arch" == "arm64" ]] && continue
             match=$(read_field "$f" "$key" "ami_match" "name")
             [[ "$match" == "name" || "$match" == "passed-tag" ]] || die "os_options.$key.ami_match must be 'name' or 'passed-tag' (got '$match') in $f"
+            owner=$(expand_config_value "$(read_field "$f" "$key" "ami_owner")") || { skipped=$((skipped + 1)); continue; }
             AMI_KEYS+=("$key")
             AMI_NAMES+=("$(read_field "$f" "$key" "name")")
             AMI_GROUPS+=("$(read_field "$f" "$key" "group")")
-            AMI_OWNERS+=("$(read_field "$f" "$key" "ami_owner")")
+            AMI_OWNERS+=("$owner")
             AMI_FILTERS+=("$(read_field "$f" "$key" "ami_filter")")
             AMI_USERS+=("$(read_field "$f" "$key" "username")")
             AMI_MATCHES+=("$match")
         done
     done
+    [[ $skipped -gt 0 ]] && echo "ℹ️  $skipped AMI option(s) hidden: they reference variables not set in .envrc.local (copy .envrc.example)" >&2
     [[ ${#AMI_KEYS[@]} -gt 0 ]] || die "No x86_64 AMI entries found in config/gpu-config-*.yaml or config/os-config-*.yaml"
 }
 
