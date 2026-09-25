@@ -119,10 +119,14 @@ write_files:
 
       # Multi-node discovery needs the AWS CLI. Stock images may lack it: try
       # each package source the image has (dnf: RPM distros such as Oracle Linux;
-      # snap: Ubuntu; apt: Debian), best-effort, stopping at the first that works.
+      # zypper: openSUSE/SLES; snap: Ubuntu; apt: Debian), best-effort, stopping at
+      # the first that works.
       if ! command -v aws &> /dev/null; then
         echo "Installing AWS CLI..."
         if command -v dnf &> /dev/null; then dnf install -y awscli || true; fi
+        if ! command -v aws &> /dev/null && command -v zypper &> /dev/null; then
+          zypper --non-interactive install aws-cli || true
+        fi
         if ! command -v aws &> /dev/null && command -v snap &> /dev/null; then
           snap install aws-cli --classic || true
           export PATH="$PATH:/snap/bin"
