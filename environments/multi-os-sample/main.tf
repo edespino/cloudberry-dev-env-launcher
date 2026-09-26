@@ -70,6 +70,7 @@ module "database_cluster" {
 
   # CPU alarm (empty topic name = no alarm)
   cpu_alarm_topic_name = var.cpu_alarm_topic_name
+  network_hardening    = var.network_hardening
 
   # Storage Configuration
   root_disk_size       = var.root_disk_size

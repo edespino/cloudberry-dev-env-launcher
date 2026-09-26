@@ -205,3 +205,15 @@ variable "cpu_alarm_topic_name" {
     error_message = "cpu_alarm_topic_name must be an SNS topic name (letters, digits, hyphens, underscores) or empty."
   }
 }
+
+variable "network_hardening" {
+  description = "Baseline network controls: a VPC flow log to CloudWatch Logs, an empty default security group, and a default network ACL that allows all inbound from the VPC CIDR and all except TCP/UDP 22 and 3389 from anywhere (ssh access mode adds TCP 22 from my_ip/32). false returns the default security group and ACL to the AWS defaults and removes the flow log. Cannot be combined with allow_remote_ssh_access."
+  type        = bool
+  default     = true
+}
+
+variable "flow_log_retention_days" {
+  description = "Retention for the VPC flow log group, in days"
+  type        = number
+  default     = 90
+}
