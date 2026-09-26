@@ -68,6 +68,9 @@ module "database_cluster" {
   owner_tag       = var.owner_tag
   environment_tag = var.environment_tag
 
+  # CPU alarm (empty topic name = no alarm)
+  cpu_alarm_topic_name = var.cpu_alarm_topic_name
+
   # Storage Configuration
   root_disk_size       = var.root_disk_size
   root_disk_iops       = var.root_disk_iops

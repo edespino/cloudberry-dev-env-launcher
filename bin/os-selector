@@ -29,6 +29,7 @@ declare -A OS_ARCHES
 declare -A SSO_PROFILES
 declare -A ACCESS_MODES
 declare -A ENV_TAGS
+declare -A ALARM_TOPICS
 declare -A SELECTION_MAP
 declare -a SKIPPED_ENTRIES=()
 
@@ -259,6 +260,10 @@ load_yaml_config() {
                 exit 1
             fi
             ENV_TAGS["$key"]=$(read_optional_field "$config_file" "$key" "environment_tag" "") || exit 1
+            # Optional; an unset "${VAR}" leaves the alarm off rather than hiding the entry
+            local raw_alarm
+            raw_alarm=$(read_optional_field "$config_file" "$key" "alarm_topic" "") || exit 1
+            ALARM_TOPICS["$key"]=$(expand_config_value "$raw_alarm") || ALARM_TOPICS["$key"]=""
         done
     done
 
@@ -385,6 +390,7 @@ show_configuration() {
     echo -e "  ${PURPLE}Default Username:${NC} $username"
     [[ -n "${SSO_PROFILES[$actual_key]}" ]] && echo -e "  ${PURPLE}SSO Profile:${NC} ${SSO_PROFILES[$actual_key]}"
     [[ -n "${ACCESS_MODES[$actual_key]}" ]] && echo -e "  ${PURPLE}Access Mode:${NC} ${ACCESS_MODES[$actual_key]}"
+    [[ -n "${ALARM_TOPICS[$actual_key]}" ]] && echo -e "  ${PURPLE}CPU Alarm Topic:${NC} ${ALARM_TOPICS[$actual_key]}"
     echo
 }
 
@@ -516,6 +522,12 @@ export TF_VAR_default_username="'"$username"'"\
         replace_placeholder "$envrc_file" "__ACCESS_MODE__" "$access_mode"
         replace_placeholder "$envrc_file" "__ENVIRONMENT_TAG__" "$env_tag"
         replace_placeholder "$envrc_file" "__OWNER_TAG__" "$owner_tag"
+        local alarm_topic="${ALARM_TOPICS[$actual_key]}"
+        if [[ ! "$alarm_topic" =~ ^[A-Za-z0-9_-]*$ ]]; then
+            echo -e "${RED}❌ Unsupported characters in alarm_topic '$alarm_topic' (SNS topic names: letters, digits, - _)${NC}" >&2
+            exit 1
+        fi
+        replace_placeholder "$envrc_file" "__CPU_ALARM_TOPIC__" "$alarm_topic"
     fi
 
     # Update main.tf module path for subdirectories

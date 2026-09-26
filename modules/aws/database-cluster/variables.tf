@@ -194,3 +194,14 @@ variable "additional_tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "cpu_alarm_topic_name" {
+  description = "Name of an existing SNS topic in the target account and region. When set, each instance gets a CloudWatch CPU alarm (Average CPUUtilization > 90% for 3 x 5 min) that publishes to it; empty disables the alarm. A name with no matching topic fails the plan."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_-]{0,256}$", var.cpu_alarm_topic_name))
+    error_message = "cpu_alarm_topic_name must be an SNS topic name (letters, digits, hyphens, underscores) or empty."
+  }
+}
