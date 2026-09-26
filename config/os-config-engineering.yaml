@@ -5,7 +5,9 @@
 #
 # Account values come from .envrc.local (see .envrc.example):
 #   LAUNCHER_ENG_ACCOUNT_ID, LAUNCHER_ENG_SSO_PROFILE, and LAUNCHER_OWNER_TAG
-#   for the Owner tag. Entries stay hidden until those are set.
+#   for the Owner tag. Entries stay hidden until the first two are set.
+#   LAUNCHER_ALERT_TOPIC_NAME (optional) names the account's SNS topic for the
+#   per-instance CPU alarm; unset leaves the alarm off.
 
 os_options:
   ubuntu26-arm64-agentic-eng:
@@ -19,6 +21,7 @@ os_options:
     sso_profile: "${LAUNCHER_ENG_SSO_PROFILE}"
     access_mode: "ssm"
     environment_tag: "engineering"
+    alarm_topic: "${LAUNCHER_ALERT_TOPIC_NAME}"
 
   ubuntu26-agentic-eng:
     name: "Ubuntu 26.04 - Agentic (engineering account)"
@@ -30,3 +33,4 @@ os_options:
     sso_profile: "${LAUNCHER_ENG_SSO_PROFILE}"
     access_mode: "ssm"
     environment_tag: "engineering"
+    alarm_topic: "${LAUNCHER_ALERT_TOPIC_NAME}"

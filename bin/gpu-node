@@ -350,6 +350,7 @@ select_instance_type() {
 PARENT_SSO_PROFILE="sso-profile"
 PARENT_REGION="us-west-2"
 PARENT_ACCESS_MODE="ssh"
+PARENT_ALARM_TOPIC=""
 load_parent_settings() {
     local envrc="$1/.envrc" v
     # A missing line keeps the default (grep's no-match status must not trip set -e)
@@ -358,6 +359,8 @@ load_parent_settings() {
     v=$({ grep -E '^export TF_VAR_region=' "$envrc" || true; } | head -1 | sed -E 's/^export TF_VAR_region="?([^"[:space:]]*)"?.*/\1/'); [[ -n "$v" ]] && PARENT_REGION="$v"
     v=$({ grep -E '^export TF_VAR_access_mode=' "$envrc" || true; } | head -1 | sed -E 's/^export TF_VAR_access_mode="?([^"[:space:]]*)"?.*/\1/'); [[ -n "$v" ]] && PARENT_ACCESS_MODE="$v"
     [[ "$PARENT_ACCESS_MODE" == "ssh" || "$PARENT_ACCESS_MODE" == "ssm" ]] || die "Parent access mode must be ssh or ssm (got '$PARENT_ACCESS_MODE' in $envrc)"
+    v=$({ grep -E '^export TF_VAR_cpu_alarm_topic_name=' "$envrc" || true; } | head -1 | sed -E 's/^export TF_VAR_cpu_alarm_topic_name="?([^"[:space:]]*)"?.*/\1/'); PARENT_ALARM_TOPIC="$v"
+    [[ "$PARENT_ALARM_TOPIC" =~ ^[A-Za-z0-9_-]*$ ]] || die "Parent cpu_alarm_topic_name has unsupported characters (got '$PARENT_ALARM_TOPIC' in $envrc)"
 }
 
 # Whether AMI entry <idx> fits the selected parent's account:
@@ -613,6 +616,7 @@ main() {
     echo -e "  ${PURPLE}AMI Filter:${NC} $ami_filter ${CYAN}(match: $ami_match)${NC}"
     echo -e "  ${PURPLE}Username:${NC} $ami_user"
     echo -e "  ${PURPLE}Region / SSO:${NC} $region / $sso_profile"
+    echo -e "  ${PURPLE}CPU Alarm Topic:${NC} ${PARENT_ALARM_TOPIC:-none}"
     echo -e "  ${PURPLE}Access:${NC} $PARENT_ACCESS_MODE $([[ "$PARENT_ACCESS_MODE" == "ssm" ]] && echo "(SSH over Session Manager, inherited from the parent)" || echo "(SSH to the public IP)")"
     echo -e "  ${PURPLE}IAM:${NC} SSM-only role ${parent_prefix}-${NODE_NAME}-ssm"
     case "$OLLAMA_ACCESS" in
@@ -655,6 +659,7 @@ main() {
     replace_placeholder "$envrc" "__DEFAULT_USERNAME__" "$ami_user"
     replace_placeholder "$envrc" "__SSO_PROFILE__" "$sso_profile"
     replace_placeholder "$envrc" "__ACCESS_MODE__" "$PARENT_ACCESS_MODE"
+    replace_placeholder "$envrc" "__CPU_ALARM_TOPIC__" "$PARENT_ALARM_TOPIC"
     replace_placeholder "$envrc" "__REGION__" "$region"
     replace_placeholder "$envrc" "__REPO_ROOT_RELPATH__" "$repo_root_rel"
 

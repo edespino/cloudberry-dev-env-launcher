@@ -105,6 +105,14 @@ Base AMIs:
 - Groups appear in order of first occurrence
 - Flexible - you can define any group names
 
+**CPU alarm**: an entry may set `alarm_topic` (usually `"${LAUNCHER_ALERT_TOPIC_NAME}"`),
+the name of an SNS topic that already exists in the target account. New
+environments from that entry get one CloudWatch CPU alarm per instance
+(Average CPUUtilization > 90% for 3 x 5 minutes) publishing to it; GPU
+sidecars inherit it from their parent. Unset or empty means no alarm. For an
+environment created from another entry, set `TF_VAR_cpu_alarm_topic_name` in
+its `.envrc`.
+
 **Account-specific values**: AWS account IDs and SSO profile names are never
 committed. `ami_owner` and `sso_profile` may be written as `"${VAR}"`; the
 selector resolves them from `.envrc.local` at the repo root (gitignored; copy

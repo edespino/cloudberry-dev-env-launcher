@@ -81,6 +81,9 @@ module "gpu_node" {
   ollama_bind         = var.ollama_bind
   ollama_client_cidrs = var.ollama_client_cidrs
 
+  # CPU alarm (empty topic name = no alarm), inherited from the parent by bin/gpu-node
+  cpu_alarm_topic_name = var.cpu_alarm_topic_name
+
   additional_tags = {
     Project = "Cloudberry Database Environment"
     Purpose = "Self-hosted GPU inference"

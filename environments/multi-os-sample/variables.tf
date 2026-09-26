@@ -247,3 +247,9 @@ variable "enable_ssl_redirect" {
   type        = bool
   default     = false
 }
+
+variable "cpu_alarm_topic_name" {
+  description = "SNS topic name for the per-instance CPU alarm (empty disables it)"
+  type        = string
+  default     = ""
+}

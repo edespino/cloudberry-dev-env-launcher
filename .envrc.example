@@ -19,3 +19,7 @@ export LAUNCHER_ENG_SSO_PROFILE=""
 
 # Owner tag for new environments (your email)
 export LAUNCHER_OWNER_TAG=""
+
+# SNS topic (already existing in each target account) for per-instance CPU
+# alarms in environments created from entries with alarm_topic; optional
+export LAUNCHER_ALERT_TOPIC_NAME=""

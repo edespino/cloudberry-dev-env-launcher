@@ -70,3 +70,9 @@ variable "authorized_ssh_public_keys" {
   type        = list(string)
   default     = []
 }
+
+variable "cpu_alarm_topic_name" {
+  description = "SNS topic name for the per-instance CPU alarm (empty disables it)"
+  type        = string
+  default     = ""
+}
