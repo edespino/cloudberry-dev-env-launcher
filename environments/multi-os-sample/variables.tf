@@ -253,3 +253,9 @@ variable "cpu_alarm_topic_name" {
   type        = string
   default     = ""
 }
+
+variable "network_hardening" {
+  description = "VPC flow log, empty default security group, and a default network ACL without 22/3389 from anywhere (false restores the AWS defaults)"
+  type        = bool
+  default     = true
+}

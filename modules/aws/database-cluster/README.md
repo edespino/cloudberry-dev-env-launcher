@@ -168,7 +168,9 @@ module "database_cluster" {
 | ami | AMI ID to use | string | - | yes |
 | instance_type | EC2 instance type | string | - | yes |
 | my_ip | Your public IP for SSH access | string | - | yes |
-| allow_remote_ssh_access | Allow SSH from anywhere (0.0.0.0/0) | bool | false | no |
+| allow_remote_ssh_access | Allow SSH from anywhere (0.0.0.0/0); requires `network_hardening = false` | bool | false | no |
+| network_hardening | VPC flow log, empty default security group, default network ACL without 22/3389 from anywhere | bool | true | no |
+| flow_log_retention_days | VPC flow log group retention, in days | number | 90 | no |
 | default_username | SSH username for instances | string | "ec2-user" | no |
 | root_disk_size | Root disk size in GB | number | 100 | no |
 | root_disk_iops | Root disk IOPS (3000-16000) | number | 8000 | no |
@@ -245,8 +247,16 @@ module "database_cluster" {
 - **Local PEM file**: Created with proper permissions (400)
 - **SSH config**: No host key verification for cluster IPs
 
+#### Network Controls (`network_hardening`, default on)
+- **VPC flow log**: all traffic to the CloudWatch Logs group `/launcher/<env_prefix>/vpc-flow-logs`, kept `flow_log_retention_days` (90). The group is deleted with the environment.
+- **Default security group**: no rules. Instances use the environment's own security group.
+- **Default network ACL**: inbound allows all from the VPC CIDR, and from `0.0.0.0/0` all TCP/UDP except 22 and 3389, plus ICMP. ssh access mode adds TCP 22 from `my_ip/32`. Outbound allows all. It applies to every subnet in the VPC without its own ACL.
+- A NAT gateway or load balancer in the VPC (dbaas-platform) uses ephemeral ports 1024-65535, so an occasional internet return flow on port 22 or 3389 is dropped and retried.
+- The first apply replaces the ACL entries, which can briefly interrupt open connections.
+- `network_hardening = false` restores the AWS default security group and ACL rules and removes the flow log.
+
 #### Remote SSH Access
-For temporary remote team access, set `allow_remote_ssh_access = true`. This opens SSH (port 22) to `0.0.0.0/0`.
+For temporary remote team access, set `allow_remote_ssh_access = true`. This opens SSH (port 22) to `0.0.0.0/0`. It requires `network_hardening = false`, because the hardened network ACL blocks port 22 from anywhere.
 
 **⚠️ Security Warning**: Only enable when needed and disable immediately after use.
 
