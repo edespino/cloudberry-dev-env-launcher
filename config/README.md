@@ -126,15 +126,16 @@ Public vendor owners (Canonical, Rocky, Amazon) stay literal.
 The launcher lists only custom images built by `cloudberry-image-factory` in the
 engineering account (`config/os-config-engineering.yaml` for database nodes,
 `config/gpu-config-engineering.yaml` for GPU sidecars): agentic `ubuntu26`
-(x86_64), `ubuntu26-arm64` and `ubuntu26-gpu`. Their owner and SSO profile come
-from `.envrc.local` (`LAUNCHER_ENG_ACCOUNT_ID`, `LAUNCHER_ENG_SSO_PROFILE`).
+(x86_64), `ubuntu26-arm64`, `ubuntu26-gpu`, and cloudberry `rocky9`. Their
+owner and SSO profile come from `.envrc.local` (`LAUNCHER_ENG_ACCOUNT_ID`,
+`LAUNCHER_ENG_SSO_PROFILE`).
 
-The **cloudberry** (rocky9, rocky10) images and the other custom families are
-not built in the engineering account yet. Build one on demand with
-`cloudberry-image-factory` as a local build
-(`AWS_PROFILE="$LAUNCHER_ENG_SSO_PROFILE"`), then add its entry back with
+rocky10 and the other custom families are not built in the engineering account
+yet. Build one on demand with `cloudberry-image-factory` as a local build
+(`AWS_PROFILE="$LAUNCHER_ENG_SSO_PROFILE"`), then add its entry with
 `ami_owner: "${LAUNCHER_ENG_ACCOUNT_ID}"`, the engineering `sso_profile`, and
-`access_mode: "ssm"`. Stock vendor images (Base AMIs) need no build.
+`access_mode: "ssm"`. The filter matches the AMI name, not the Name tag, so
+do not append `-PASSED`. Stock vendor images (Base AMIs) need no build.
 
 ## Installing yq
 

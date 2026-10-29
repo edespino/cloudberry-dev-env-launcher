@@ -34,3 +34,17 @@ os_options:
     access_mode: "ssm"
     environment_tag: "engineering"
     alarm_topic: "${LAUNCHER_ALERT_TOPIC_NAME}"
+
+  rocky9-cloudberry-eng:
+    name: "Rocky Linux 9 - Cloudberry build (engineering account)"
+    group: "Cloudberry - Engineering Account"
+    ami_owner: "${LAUNCHER_ENG_ACCOUNT_ID}"
+    # Matches the AMI name. The -PASSED suffix is only on the Name tag.
+    # os-selector filters Name=name, so the filter must not include -PASSED.
+    ami_filter: "cloudberry-packer-rocky9-*"
+    username: "rocky"
+    dir_name: "rocky9-cloudberry-eng"
+    sso_profile: "${LAUNCHER_ENG_SSO_PROFILE}"
+    access_mode: "ssm"
+    environment_tag: "engineering"
+    alarm_topic: "${LAUNCHER_ALERT_TOPIC_NAME}"
