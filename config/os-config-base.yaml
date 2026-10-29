@@ -10,8 +10,8 @@
 os_options:
 
 ## Custom AMIs built by cloudberry-image-factory are listed in
-## os-config-engineering.yaml. The cloudberry (rocky9, rocky10) images are not
-## built in the engineering account yet; see config/README.md "Custom AMIs".
+## os-config-engineering.yaml. rocky9 is listed there. rocky10 is not built
+## in the engineering account yet; see config/README.md "Custom AMIs".
 
 ## ----------------------------------------------------------------------
 ## Base AMIs
