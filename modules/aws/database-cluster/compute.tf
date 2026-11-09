@@ -61,8 +61,10 @@ resource "aws_instance" "database_instances" {
   # (no public IP while stopped); that attribute forces replacement, so a plan
   # against a stopped instance would propose destroying it. The subnet sets
   # map_public_ip_on_launch, so the attribute is redundant after creation.
+  # placement_group is ForceNew. A later vm_count of 2 must not
+  # replace the instance that was created when the count was 1.
   lifecycle {
-    ignore_changes = [user_data, associate_public_ip_address]
+    ignore_changes = [user_data, associate_public_ip_address, placement_group]
   }
 
   depends_on = [aws_placement_group.cluster, null_resource.instance_profile_propagation]
